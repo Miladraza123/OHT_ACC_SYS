@@ -1174,7 +1174,13 @@
   function allKinds() {
     var fixed = KINDS.filter(function (k) { return k[0] !== 'other'; });
     var other = KINDS.filter(function (k) { return k[0] === 'other'; });
-    var custom = customKinds.map(function (c) { return [c.value, c.label]; });
+    // Jo category pehle se yahan mojood hai, wo party_kinds se dobara na aaye.
+    // (Warna Customer, Bank waghera do-do dafa dikhte hain.)
+    var builtin = {};
+    KINDS.forEach(function (k) { builtin[k[0]] = true; });
+    var custom = customKinds
+      .filter(function (c) { return !builtin[c.value]; })
+      .map(function (c) { return [c.value, c.label]; });
     return fixed.concat(custom).concat(other);
   }
   function kindLabel(v) {
