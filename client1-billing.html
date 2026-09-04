@@ -438,7 +438,8 @@
 (function () {
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
-  var CFG = 'ledger-cfg';
+  // Supabase connection ki key — storeKey se banti hai (jaise qtc-cfg)
+  var CFG = window.APP_CONFIG.key('cfg');
   var store = {
     get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },

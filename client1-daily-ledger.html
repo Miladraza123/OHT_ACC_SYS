@@ -703,7 +703,8 @@
   };
 
   /* ─── cloud ─── */
-  var CFG = 'ledger-cfg';
+  // Supabase connection ki key — storeKey se banti hai (jaise qtc-cfg)
+  var CFG = window.APP_CONFIG.key('cfg');
   var sb = null, pendingSync = {}, syncTimer = null, online = navigator.onLine;
 
   function syncNote(text, colour) {

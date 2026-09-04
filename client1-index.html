@@ -316,7 +316,7 @@
   $('askNo').addEventListener('click', function () { $('ask').classList.remove('on'); });
   $('askYes').addEventListener('click', function () {
     $('askYes').disabled = true; $('askYes').textContent = 'Signing out…';
-    var raw = store('ledger-cfg'), done = function () { location.reload(); };
+    var raw = store(APP.key('cfg')), done = function () { location.reload(); };
     if (!raw) { done(); return; }
     var cfg; try { cfg = JSON.parse(raw); } catch (e) { cfg = null; }
     if (!cfg || !cfg.url || !cfg.key || !window.supabase) { done(); return; }

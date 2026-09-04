@@ -600,7 +600,8 @@
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var APP = window.APP_CONFIG;
-  var CFG = 'ledger-cfg';           // wahi key jo baqi apps istemaal karti hain
+  // Supabase connection ki key — storeKey se banti hai (jaise qtc-cfg)
+  var CFG = window.APP_CONFIG.key('cfg');
   $('brandMark').textContent = APP.mark;
 
   var store = {

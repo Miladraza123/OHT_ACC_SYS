@@ -985,7 +985,9 @@
   $('brandMark').textContent = APP.mark;
 
   /* ---------- storage ---------- */
-  var CFG = 'ledger-cfg';                 // ledger ke saath wahi key — dobara paste na karna pare
+  // Supabase connection ki key. storeKey se banti hai (jaise qtc-cfg), is liye
+  // ek hi browser mein do alag systems aapas mein nahi takrate.
+  var CFG = window.APP_CONFIG.key('cfg');
   var store = {
     get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
