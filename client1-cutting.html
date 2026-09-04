@@ -1334,6 +1334,10 @@
     // Print sirf save shuda documents par — naye par chhapne ko kuch hai hi nahi
     $('edPrint').style.display =
       (doc && (kind === 'challan' || kind === 'invoice' || kind === 'inward')) ? '' : 'none';
+    // Save ki visibility HAR DAFA reset karo. Warna ek dafa koi read-only
+    // document (jaise coil ki tafseel) kholne ke baad Save hamesha ke liye
+    // chhup jata hai — kyunki wahan usay display:none kiya jata hai.
+    $('edSave').style.display = saveFn ? '' : 'none';
     $('edDel').style.display = delFn ? '' : 'none';
     $('edDel').onclick = delFn || null;
     $('ed').classList.add('on');
