@@ -1,28 +1,31 @@
 /* ============================================================
-   app-config.js — client ki pehchan sirf yahan hai
+   app-config.js — is installation ki pehchan
 
-   Naye client ke liye system tayyar karna ho to bas yeh chaar
-   values badal dein. Poore codebase mein kisi aur jagah company
-   ka naam ya koi identifier hard-code nahi hai.
+   Do cheezein alag hain:
 
-   brand      — bill/statement ke upar chhapne wala naam, aur
-                browser tab ka title. Note: agar Masters → Firms
-                mein company banai gayi ho to bill par uska naam
-                chapega; yeh sirf fallback hai.
-   mark       — header mein dikhne wala chhota mark (2-4 harf)
-   authDomain — login scheme. User "ali" likhta hai, system use
-                "ali@<authDomain>" bana kar Supabase Auth ko bhejta
-                hai. Poora email likhein to woh waise hi jata hai.
-                YEH KABHI NA BADLEIN jab tak users ban chuke hon —
-                warna purane users login nahi kar payenge.
-   storeKey   — localStorage keys ka prefix (offline queue, cache,
-                aakhri khuli tab). Alag rakhne se aik hi browser
-                mein do systems aapas mein na takrayein.
+   SOFTWARE KI PEHCHAN — yeh aap ki hai (OHT), client ki nahi.
+     appName  — app ka naam: browser ka tab, PWA install, home screen icon
+     mark     — header mein upar-baaen chhota mark
+
+   CLIENT KE KAROBAR KA NAAM — yeh bill par aata hai.
+     brand    — sirf fallback hai. Agar Masters > Firms mein firm banai
+                gayi ho to bill par uska naam chapega. Backup file ka
+                naam bhi isi se banta hai.
+
+   TECHNICAL — inhein soch samajh kar badlein.
+     authDomain — login ka tareeqa. User "ali" likhta hai, system
+                  "ali@<authDomain>" bana kar Supabase ko bhejta hai.
+                  USERS BAN JANE KE BAAD YEH KABHI NA BADLEIN — warna
+                  koi purana user login nahi kar payega.
+     storeKey   — browser mein save hone wali cheezon ka prefix
+                  (connection settings, offline queue, cache). Alag
+                  rakhne se ek hi browser mein do systems nahi takrate.
    ============================================================ */
 
 window.APP_CONFIG = {
+  appName:    'OHT Accounting System',
+  mark:       'OHT',
   brand:      'Qasim Tayyab Cutter',
-  mark:       'QTC',
   authDomain: 'qtc.internal',
   storeKey:   'qtc'
 };

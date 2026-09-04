@@ -3,9 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Accounting</title>
+<title>OHT Accounting System</title>
 <meta name="theme-color" content="#2A2620">
 <link rel="manifest" href="manifest.json">
+<link rel="icon" href="icons/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Accounting">
@@ -119,7 +123,7 @@
 
   var APP = window.APP_CONFIG;
   $('brandMark').textContent = APP.mark;
-  document.title = APP.brand + ' Accounting';
+  document.title = APP.appName;
 
   var APPS = [
     { k:'ledger',  label:'Ledger',  file:'client1-daily-ledger.html' },
@@ -259,7 +263,7 @@
       b.classList.toggle('on', b.getAttribute('data-k') === key);
     });
     current = key;
-    document.title = app.label + ' \u2014 ' + APP.brand;
+    document.title = app.label + ' \u2014 ' + APP.appName;
     try { store(APP.key('tab'), key); } catch (e) {}
     if (push) {
       try { history.replaceState(null, '', '#' + key); } catch (e) {}
