@@ -14,15 +14,14 @@ values (1, null)
 on conflict (id) do nothing;
 
 -- ---------- Party categories ----------
--- Yeh app ki bunyadi categories hain. Client Masters screen se
--- apni categories khud bhi add kar sakta hai.
-
-insert into party_kinds (value, label) values
-  ('customer', 'Customer'),
-  ('supplier', 'Supplier'),
-  ('bank',     'Bank'),
-  ('expense',  'Expense head')
-on conflict (value) do nothing;
+-- YAHAN KUCH NAHI DAALNA.
+--
+-- Customer, Supplier, Customer & Supplier, Expense head, Bank aur Other
+-- app ke andar pehle se bane hue hain. party_kinds table sirf UN
+-- categories ke liye hai jo user khud Masters se add kare.
+--
+-- Agar yahan wohi chaar daal diye jayein to dropdown mein har category
+-- do-do dafa dikhti hai.
 
 -- ---------- Default warehouse ----------
 -- Kam se kam aik warehouse hona zaroori hai, warna bill par
