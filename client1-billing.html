@@ -327,7 +327,7 @@
     <h1>Sign in</h1>
     <div class="lede">Apna username aur password daalein.</div>
     <div class="err" id="lErr"></div>
-    <div class="f"><label>Username</label><input id="lMail" type="text" autocomplete="username"></div>
+    <div class="f"><label>Username</label><input id="lMail" type="text" autocomplete="username" list="userList" spellcheck="false"><datalist id="userList"></datalist></div>
     <div class="f"><label>Password</label><input id="lPass" type="password" autocomplete="current-password"></div>
     <button class="btn pri" id="lGo" style="width:100%">Sign in</button>
     <div class="note"><button class="btn" id="cfgReset" style="font-size:12px;padding:0;border:none;background:none;color:var(--mute);text-decoration:underline">Use a different project</button></div>
@@ -452,6 +452,31 @@
   var returns = [];   // Sales Returns — asal financial impact hai, is liye alag nahi (ledger/stock mein shamil)
   var parties = [], items = [], bills = [], firms = [], warehouses = [], transfers = [], lineSeq = 0;
   var APP = window.APP_CONFIG;
+
+  /* ---------- Yaad rakhe hue usernames ----------
+     Login se pehle app_users table padhi nahi ja sakti (RLS rokti hai, aur
+     yeh theek hai — warna koi bhi saare usernames nikaal leta). Is liye
+     sirf wo naam yaad rakhte hain jo isi device par kamiyabi se login kar
+     chuke hain, aur likhte waqt tajweez mein dikha dete hain.              */
+  function knownUsers() {
+    try { return JSON.parse(localStorage.getItem(APP.key('users')) || '[]'); }
+    catch (e) { return []; }
+  }
+  function rememberUser(name) {
+    name = String(name || '').trim();
+    if (!name || name.indexOf('@') > -1) return;
+    var list = knownUsers().filter(function (u) { return u.toLowerCase() !== name.toLowerCase(); });
+    list.unshift(name);
+    try { localStorage.setItem(APP.key('users'), JSON.stringify(list.slice(0, 12))); } catch (e) {}
+  }
+  function fillUserList(inputId, listId) {
+    var dl = document.getElementById(listId);
+    if (!dl) return;
+    dl.innerHTML = knownUsers().map(function (u) {
+      return '<option value="' + u.replace(/"/g, '&quot;') + '"></option>';
+    }).join('');
+  }
+
   var firmName = APP.brand;   // sirf fallback — Masters > Firms ka naam tarjeeh rakhta hai
   $('brandMark').textContent = APP.mark;
 
@@ -492,10 +517,11 @@
   function esc(s) { return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
     return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]; }); }
   function today() {
-    // Karachi (PKT, UTC+5) time use karte hain — device ki apni timezone se koi
-    // farq nahi padta, chahe staff ka phone kisi bhi zone par set ho
-    var d = new Date(Date.now() + 5 * 60 * 60000);
-    return d.toISOString().slice(0, 10);
+    // Hamesha Karachi ka waqt — device ki apni timezone se koi farq nahi padta,
+    // chahe staff ka phone kisi bhi zone par set ho.
+    var pk = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));
+    return pk.getFullYear() + '-' + String(pk.getMonth() + 1).padStart(2, '0') +
+           '-' + String(pk.getDate()).padStart(2, '0');
   }
   function human(iso) {
     if (!iso) return '';
@@ -2851,7 +2877,7 @@
       if (res.error) { showErr('lErr', isNetErr(res.error) ? 'No internet. Connect and try again.'
                                         : isClockErr(res.error) ? 'Your phone\u2019s clock looks slightly off \u2014 check Date & Time settings and try again.'
                                         : 'That username and password did not match.'); return; }
-      $('lPass').value = ''; $('gateLogin').classList.remove('on'); start();
+      rememberUser(raw); $('lPass').value = ''; $('gateLogin').classList.remove('on'); start();
     }).catch(function (e) {
       $('lGo').disabled = false; $('lGo').textContent = 'Sign in';
       showErr('lErr', isNetErr(e) ? 'No internet. Connect and try again.' : 'Could not sign in.');
@@ -2872,11 +2898,11 @@
     sb.auth.getSession().then(function (res) {
       if (res.data && res.data.session) start();
       else if (!navigator.onLine && hasCachedAuthToken()) start();
-      else $('gateLogin').classList.add('on');
+      else fillUserList('lMail','userList'); $('gateLogin').classList.add('on');
     }).catch(function (e) {
       if (isClockErr(e) && attempt < 5) { setTimeout(function () { afterConnect(attempt + 1); }, 3000); return; }
       if (!navigator.onLine && hasCachedAuthToken()) { start(); return; }
-      $('gateLogin').classList.add('on');
+      fillUserList('lMail','userList'); $('gateLogin').classList.add('on');
     });
   }
   function hasCachedAuthToken() {
@@ -2988,7 +3014,7 @@
         : (e && e.message === 'not_setup')
         ? 'Aapka account abhi set up nahi hua. Admin se raabta karein.'
         : 'Sign-in check nahi ho saka. Dobara koshish karein.';
-      sb.auth.signOut().then(function () { $('gateLogin').classList.add('on'); showErr('lErr', msg); });
+      sb.auth.signOut().then(function () { fillUserList('lMail','userList'); $('gateLogin').classList.add('on'); showErr('lErr', msg); });
     });
   }
 

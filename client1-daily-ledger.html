@@ -375,9 +375,10 @@
     <div id="stepLogin" style="padding:18px 22px;display:none">
       <label style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
              color:#9C9384;font-weight:600">Username</label>
-      <input id="loginEmail" type="text" autocomplete="username"
+      <input id="loginEmail" type="text" autocomplete="username" list="userList" spellcheck="false"
              style="width:100%;padding:10px;margin:6px 0 14px;border:1px solid #CBD2D9;
                     border-radius:6px;font-size:14px">
+      <datalist id="userList"></datalist>
       <label style="font-size:10px;letter-spacing:1.2px;text-transform:uppercase;
              color:#9C9384;font-weight:600">Password</label>
       <input id="loginPass" type="password" autocomplete="current-password"
@@ -684,6 +685,31 @@
   var MIN_ROWS = 22, KEY = 'ledger-app-pk';
   var $ = function (id) { return document.getElementById(id); };
   var APP = window.APP_CONFIG;
+
+  /* ---------- Yaad rakhe hue usernames ----------
+     Login se pehle app_users table padhi nahi ja sakti (RLS rokti hai, aur
+     yeh theek hai — warna koi bhi saare usernames nikaal leta). Is liye
+     sirf wo naam yaad rakhte hain jo isi device par kamiyabi se login kar
+     chuke hain, aur likhte waqt tajweez mein dikha dete hain.              */
+  function knownUsers() {
+    try { return JSON.parse(localStorage.getItem(APP.key('users')) || '[]'); }
+    catch (e) { return []; }
+  }
+  function rememberUser(name) {
+    name = String(name || '').trim();
+    if (!name || name.indexOf('@') > -1) return;
+    var list = knownUsers().filter(function (u) { return u.toLowerCase() !== name.toLowerCase(); });
+    list.unshift(name);
+    try { localStorage.setItem(APP.key('users'), JSON.stringify(list.slice(0, 12))); } catch (e) {}
+  }
+  function fillUserList(inputId, listId) {
+    var dl = document.getElementById(listId);
+    if (!dl) return;
+    dl.innerHTML = knownUsers().map(function (u) {
+      return '<option value="' + u.replace(/"/g, '&quot;') + '"></option>';
+    }).join('');
+  }
+
   var rowsEl = $('rows');
 
   var data = { firm:'', sheets:{}, sheetBase:{} };
@@ -988,8 +1014,10 @@
   function todayISO() {
     // Karachi (PKT, UTC+5) time use karte hain — device ki apni timezone se koi
     // farq nahi padta, chahe staff ka phone kisi bhi zone par set ho
-    var d = new Date(Date.now() + 5 * 60 * 60000);
-    return d.toISOString().slice(0, 10);
+    // Hamesha Karachi ka waqt — device ki timezone se koi farq nahi padta
+    var pk = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));
+    return pk.getFullYear() + '-' + String(pk.getMonth() + 1).padStart(2, '0') +
+           '-' + String(pk.getDate()).padStart(2, '0');
   }
   function num(v) { var n = parseFloat(String(v).replace(/,/g, '').trim()); return isNaN(n) ? 0 : n; }
   function fmt(n) { return Math.round(n).toLocaleString('en-PK', { maximumFractionDigits:0 }); }
@@ -1002,7 +1030,8 @@
   }
   function shiftDate(iso, n) {
     var d = new Date(iso + 'T00:00:00'); d.setDate(d.getDate() + n);
-    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+           '-' + String(d.getDate()).padStart(2, '0');
   }
 
   // Party khaana: likhai lambi ho to khud do line par aa jata hai (do se zyada nahi)
@@ -2071,6 +2100,7 @@
   function showLogin(err) {
     $('gate').style.display = 'flex';
     $('stepConnect').style.display = 'none';
+    fillUserList('loginEmail','userList');
     $('stepLogin').style.display = 'block';
     $('gateSub').textContent = 'Sign in to your ledger';
     $('loginErr').textContent = err || '';
@@ -2116,6 +2146,7 @@
           : 'That username and password did not match.';
         return;
       }
+      rememberUser(raw);
       startApp();
     }).catch(function () {
       $('loginErr').textContent = 'No internet. Connect and try again.';

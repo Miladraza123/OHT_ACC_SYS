@@ -509,7 +509,7 @@
     <h1>Sign in</h1>
     <div class="lede">Apna username aur password daalein.</div>
     <div class="err" id="lErr"></div>
-    <div class="f"><label>Username</label><input id="lMail" type="text" autocomplete="username"></div>
+    <div class="f"><label>Username</label><input id="lMail" type="text" autocomplete="username" list="userList" spellcheck="false"><datalist id="userList"></datalist></div>
     <div class="f"><label>Password</label>
       <input id="lPass" type="password" autocomplete="current-password"></div>
     <button class="btn pri" id="lGo" style="width:100%">Sign in</button>
@@ -982,6 +982,31 @@
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var APP = window.APP_CONFIG;
+
+  /* ---------- Yaad rakhe hue usernames ----------
+     Login se pehle app_users table padhi nahi ja sakti (RLS rokti hai, aur
+     yeh theek hai — warna koi bhi saare usernames nikaal leta). Is liye
+     sirf wo naam yaad rakhte hain jo isi device par kamiyabi se login kar
+     chuke hain, aur likhte waqt tajweez mein dikha dete hain.              */
+  function knownUsers() {
+    try { return JSON.parse(localStorage.getItem(APP.key('users')) || '[]'); }
+    catch (e) { return []; }
+  }
+  function rememberUser(name) {
+    name = String(name || '').trim();
+    if (!name || name.indexOf('@') > -1) return;
+    var list = knownUsers().filter(function (u) { return u.toLowerCase() !== name.toLowerCase(); });
+    list.unshift(name);
+    try { localStorage.setItem(APP.key('users'), JSON.stringify(list.slice(0, 12))); } catch (e) {}
+  }
+  function fillUserList(inputId, listId) {
+    var dl = document.getElementById(listId);
+    if (!dl) return;
+    dl.innerHTML = knownUsers().map(function (u) {
+      return '<option value="' + u.replace(/"/g, '&quot;') + '"></option>';
+    }).join('');
+  }
+
   $('brandMark').textContent = APP.mark;
 
   /* ---------- storage ---------- */
@@ -1778,10 +1803,11 @@
 
   function n(v) { var x = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isFinite(x) ? x : 0; }
   function today() {
-    // Karachi (PKT, UTC+5) time use karte hain — device ki apni timezone se koi
-    // farq nahi padta, chahe staff ka phone kisi bhi zone par set ho
-    var d = new Date(Date.now() + 5 * 60 * 60000);
-    return d.toISOString().slice(0, 10);
+    // Hamesha Karachi ka waqt — device ki apni timezone se koi farq nahi padta,
+    // chahe staff ka phone kisi bhi zone par set ho.
+    var pk = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));
+    return pk.getFullYear() + '-' + String(pk.getMonth() + 1).padStart(2, '0') +
+           '-' + String(pk.getDate()).padStart(2, '0');
   }
   function r2(v) { return Math.round((Number(v) || 0) * 100) / 100; }
   function money(v) { return (Number(v) || 0).toLocaleString('en-PK', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
@@ -4086,6 +4112,7 @@
                                             : 'That username and password did not match.');
         return;
       }
+      rememberUser(raw);
       $('lPass').value = '';
       $('gateLogin').classList.remove('on');
       start();
@@ -4465,10 +4492,10 @@
     sb.auth.getSession().then(function (res) {
       if (res.data && res.data.session) { start(); }
       else if (!navigator.onLine && hasCachedAuthToken()) { start(); }   // offline, lekin pehle login ho chuka tha
-      else { $('gateLogin').classList.add('on'); }
+      else { fillUserList('lMail','userList'); $('gateLogin').classList.add('on'); }
     }).catch(function () {
       if (!navigator.onLine && hasCachedAuthToken()) { start(); return; }
-      $('gateLogin').classList.add('on');
+      fillUserList('lMail','userList'); $('gateLogin').classList.add('on');
     });
   }
   function hasCachedAuthToken() {
@@ -4508,7 +4535,7 @@
         ? 'Aapka account abhi set up nahi hua. Admin se raabta karein.'
         : 'Sign-in check nahi ho saka. Dobara koshish karein.';
       sb.auth.signOut().then(function () {
-        $('gateLogin').classList.add('on');
+        fillUserList('lMail','userList'); $('gateLogin').classList.add('on');
         showErr('lErr', msg);
       });
     });

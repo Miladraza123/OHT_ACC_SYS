@@ -7,7 +7,7 @@
    nahi. Version badhane ke liye sirf CACHE_VERSION number badlein.
    ═══════════════════════════════════════════════════════════════ */
 
-var CACHE_VERSION = 'client1-shell-v2';
+var CACHE_VERSION = 'qtc-shell-v3';
 
 var SHELL_FILES = [
   './',
@@ -19,8 +19,6 @@ var SHELL_FILES = [
   './client1-daily-ledger.html',
   './app-config.js',
   './manifest.json',
-  './icons/icon-192.png',
-  './icons/icon-512.png',
 ];
 
 self.addEventListener('install', function (event) {

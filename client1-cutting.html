@@ -401,13 +401,13 @@
 <div class="gate on" id="gateConnect">
   <div class="gcard">
     <h1>Connect to your data</h1>
-    <div class="lede">Wahi Supabase project jo Ledger, Masters aur Billing ka hai.</div>
+    <div class="lede">Apne Supabase project ka URL aur publishable key daalein.</div>
     <div class="err" id="cErr"></div>
     <div class="f"><label>Project URL</label><input id="cUrl" type="url" placeholder="https://xxxx.supabase.co" autocomplete="off"></div>
     <div class="f"><label>Publishable / anon key</label><input id="cKey" type="text" placeholder="eyJhbGciOi…" autocomplete="off">
       <div class="hint">Use the publishable (anon) key only.</div></div>
     <button class="btn pri" id="cGo" style="width:100%">Connect</button>
-    <div class="note">Stored only in this browser. Keep this file next to the ledger and it connects on its own.</div>
+    <div class="note">Yeh sirf isi browser mein save hoti hai. Ek dafa daalne ke baad khud connect ho jata hai.</div>
   </div>
 </div>
 
@@ -416,7 +416,7 @@
     <h1>Sign in</h1>
     <div class="lede">Apna username aur password daalein.</div>
     <div class="err" id="lErr"></div>
-    <div class="f"><label>Username</label><input id="lMail" type="text" autocomplete="username"></div>
+    <div class="f"><label>Username</label><input id="lMail" type="text" autocomplete="username" list="userList" spellcheck="false"><datalist id="userList"></datalist></div>
     <div class="f"><label>Password</label><input id="lPass" type="password" autocomplete="current-password"></div>
     <button class="btn pri" id="lGo" style="width:100%">Sign in</button>
     <div class="note"><button class="btn" id="cfgReset" style="font-size:12px;padding:0;border:none;background:none;color:var(--mute);text-decoration:underline">Use a different project</button></div>
@@ -600,6 +600,31 @@
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var APP = window.APP_CONFIG;
+
+  /* ---------- Yaad rakhe hue usernames ----------
+     Login se pehle app_users table padhi nahi ja sakti (RLS rokti hai, aur
+     yeh theek hai — warna koi bhi saare usernames nikaal leta). Is liye
+     sirf wo naam yaad rakhte hain jo isi device par kamiyabi se login kar
+     chuke hain, aur likhte waqt tajweez mein dikha dete hain.              */
+  function knownUsers() {
+    try { return JSON.parse(localStorage.getItem(APP.key('users')) || '[]'); }
+    catch (e) { return []; }
+  }
+  function rememberUser(name) {
+    name = String(name || '').trim();
+    if (!name || name.indexOf('@') > -1) return;
+    var list = knownUsers().filter(function (u) { return u.toLowerCase() !== name.toLowerCase(); });
+    list.unshift(name);
+    try { localStorage.setItem(APP.key('users'), JSON.stringify(list.slice(0, 12))); } catch (e) {}
+  }
+  function fillUserList(inputId, listId) {
+    var dl = document.getElementById(listId);
+    if (!dl) return;
+    dl.innerHTML = knownUsers().map(function (u) {
+      return '<option value="' + u.replace(/"/g, '&quot;') + '"></option>';
+    }).join('');
+  }
+
   // Supabase connection ki key — storeKey se banti hai (jaise qtc-cfg)
   var CFG = window.APP_CONFIG.key('cfg');
   $('brandMark').textContent = APP.mark;
@@ -635,8 +660,8 @@
 
   /* Karachi (PKT, UTC+5) — device ki timezone se koi farq nahi parta */
   function todayPKT() {
-    var d = new Date(Date.now() + (5 * 60 - (-new Date().getTimezoneOffset())) * 0);
-    var pk = new Date(new Date().toLocaleString('en-US', { timeZone:'Asia/Karachi' }));
+    // Hamesha Karachi ka waqt — device ki timezone se koi farq nahi padta
+    var pk = new Date(new Date().toLocaleString('en-US', { timeZone: 'Asia/Karachi' }));
     return pk.getFullYear() + '-' + String(pk.getMonth() + 1).padStart(2, '0') + '-' +
            String(pk.getDate()).padStart(2, '0');
   }
@@ -3799,7 +3824,7 @@
           : 'Username ya password ghalat hai.');
         return;
       }
-      $('lPass').value = ''; $('gateLogin').classList.remove('on'); start();
+      rememberUser(raw); $('lPass').value = ''; $('gateLogin').classList.remove('on'); start();
     }).catch(function (e) {
       $('lGo').disabled = false; $('lGo').textContent = 'Sign in';
       showErr('lErr', isNetErr(e) ? 'Internet nahi hai.' : 'Sign in nahi ho saka.');
@@ -3818,8 +3843,8 @@
   function afterConnect() {
     sb.auth.getSession().then(function (res) {
       if (res.data && res.data.session) start();
-      else $('gateLogin').classList.add('on');
-    }).catch(function () { $('gateLogin').classList.add('on'); });
+      else fillUserList('lMail','userList'); $('gateLogin').classList.add('on');
+    }).catch(function () { fillUserList('lMail','userList'); $('gateLogin').classList.add('on'); });
   }
 
   function start() {
@@ -3840,7 +3865,7 @@
       var msg = (e && e.message === 'disabled') ? 'Aapka access band kar diya gaya hai. Admin se raabta karein.'
               : (e && e.message === 'not_setup') ? 'Aapka account abhi set up nahi hua. Admin se raabta karein.'
               : 'Sign-in check nahi ho saka. Dobara koshish karein.';
-      sb.auth.signOut().then(function () { $('gateLogin').classList.add('on'); showErr('lErr', msg); });
+      sb.auth.signOut().then(function () { fillUserList('lMail','userList'); $('gateLogin').classList.add('on'); showErr('lErr', msg); });
     });
   }
 
