@@ -334,6 +334,14 @@
   .cbar .out { background:var(--credit); }
 
   /* size rows (cutting sizes / conversion lines) */
+  .unitsw { display:flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; flex:none; }
+  .unitsw button { padding:5px 11px; background:none; border:none; font-size:12.5px;
+                   color:var(--mute); font-weight:600; }
+  .unitsw button.on { background:var(--ink); color:#fff; }
+  .szbox .top { display:flex; align-items:center; justify-content:space-between; margin-bottom:8px; }
+  .szbox .szn { font-size:11px; letter-spacing:.7px; text-transform:uppercase; color:var(--mute);
+                font-weight:700; }
+
   .szhead, .szrow { display:flex; gap:7px; align-items:center; padding:7px 9px; }
   .szhead { background:var(--panel); border-bottom:1px solid var(--hair);
             font-size:9.5px; font-weight:700; letter-spacing:.8px; text-transform:uppercase; color:var(--mute); }
@@ -600,6 +608,36 @@
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var APP = window.APP_CONFIG;
+
+  /* ---------- Session ka refresh ----------
+     Chaaron apps ek hi browser mein, ek hi jagah session rakhti hain. Agar
+     chaaron ek saath token refresh karein to Supabase ka refresh token (jo
+     sirf ek dafa chalta hai) ek app istemaal kar leti hai aur baqi teen ka
+     session toot jata hai — is liye bar bar sign-in maangta tha.
+     Ab refresh sirf wohi app karti hai jo us waqt khuli ho.               */
+  var autoRefreshOn = false;
+  function setAutoRefresh(on) {
+    if (!sb || !sb.auth || autoRefreshOn === on) return;
+    autoRefreshOn = on;
+    try {
+      if (on) { sb.auth.getSession().then(function () { sb.auth.startAutoRefresh(); }); }
+      else { sb.auth.stopAutoRefresh(); }
+    } catch (e) {}
+  }
+
+  /* Shell batata hai ke yeh app abhi khuli hui hai ya peeche chali gayi.
+     Session ka refresh sirf khuli app karti hai. */
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.msg === 'active') setAutoRefresh(!!e.data.on);
+  });
+  /* Shell ke baghair (seedha URL se) khuli ho to bhi refresh chalna chahiye */
+  if (window.self === window.top) {
+    document.addEventListener('visibilitychange', function () {
+      setAutoRefresh(document.visibilityState === 'visible');
+    });
+  }
+
+
 
   /* ---------- Yaad rakhe hue usernames ----------
      Login se pehle app_users table padhi nahi ja sakti (RLS rokti hai, aur
@@ -977,10 +1015,10 @@
     var todayCh   = challans.filter(function (d) { return d.ddate === today && activeDoc(d); });
 
     var lowBal = activeCoils.filter(function (c) {
-      return num(c.raw_balance) > 0 && num(c.raw_balance) <= thr;
+      return num(c.physical_balance) > 0 && num(c.physical_balance) <= thr;
     });
     var pendingDel = sum(coils, function (c) { return c.pending_delivery; });
-    var rawBal     = sum(activeCoils, function (c) { return c.raw_balance; });
+    var phyBal     = sum(activeCoils, function (c) { return c.physical_balance; });
     var draftJobs  = jobs.filter(function (j) { return j.status === 'draft'; });
 
     var billedJobIds = {};
@@ -1002,7 +1040,7 @@
     kpi('Aaj process hua',      String(todayJobs.length), 'jobs', '', 'jobs');
     kpi('Active coils',         String(activeCoils.length), '', '', 'coils');
     kpi('Low balance coils',    String(lowBal.length), '\u2264' + kg(thr) + 'kg', lowBal.length ? 'warn' : '', 'coils');
-    kpi('Raw coil balance',     kg(rawBal), 'kg', '', 'coils');
+    kpi('Party ka maal paas',   kg(phyBal), 'kg', '', 'coils');
     kpi('Pending cutting',      String(draftJobs.length), 'draft', draftJobs.length ? 'warn' : '', 'jobs');
     kpi('Delivery ke liye tayyar', kg(pendingDel), 'kg', pendingDel > 0 ? 'good' : '', 'ready');
     kpi('Aaj delivery',         String(todayCh.length), 'challans', '', 'challans');
@@ -1016,7 +1054,7 @@
             return '<div class="selrow" data-coil="' + esc(c.id) + '" style="border-radius:7px">' +
               '<div class="mid"><div class="nm">' + esc(c.coil_serial) + '</div>' +
               '<div class="sub">' + esc(nameOf(parties, c.party_id)) + '</div></div>' +
-              '<div class="amt">' + kg(c.raw_balance) + ' kg</div></div>';
+              '<div class="amt">' + kg(c.physical_balance) + ' kg</div></div>';
           }).join('') +
           '<div class="f" style="margin:9px 0 0"><div class="hint">System khud coil band nahi karta. ' +
           'Coil Stock mein ja kar tasdeeq karein.</div></div></div></div>'
@@ -1060,7 +1098,7 @@
     var f = el.getAttribute('data-filter') || coilFilter;
     var rows = coils.filter(function (c) {
       if (coilFilter === 'active' && c.status !== 'active') return false;
-      if (coilFilter === 'low' && !(c.status === 'active' && num(c.raw_balance) > 0 && num(c.raw_balance) <= thr)) return false;
+      if (coilFilter === 'low' && !(c.status === 'active' && num(c.physical_balance) > 0 && num(c.physical_balance) <= thr)) return false;
       if (coilFilter === 'pending' && !(num(c.pending_delivery) > 0)) return false;
       if (coilFilter === 'closed' && c.status !== 'closed') return false;
       return hitsQuery(c.coil_serial + ' ' + (c.party_coil_ref || '') + ' ' +
@@ -1075,7 +1113,9 @@
     var body = rows.length ? '<div class="rows">' + rows.map(function (c) {
       var rec = num(c.received_weight) || 1;
       var raw = num(c.raw_balance), fin = num(c.pending_delivery), out = num(c.delivered_weight);
-      var low = c.status === 'active' && raw > 0 && raw <= thr;
+      var phy = num(c.physical_balance);
+      // "Low" ka faisla us maal par hota hai jo ASAL MEIN hamare paas hai
+      var low = c.status === 'active' && phy > 0 && phy <= thr;
       return '<div class="brow" data-open="' + esc(c.id) + '" tabindex="0">' +
         '<div style="flex:1;min-width:0">' +
         '<div style="display:flex;align-items:center;gap:8px">' +
@@ -1090,8 +1130,8 @@
         '<div class="cbar"><i class="raw" style="width:' + (raw / rec * 100) + '%"></i>' +
         '<i class="fin" style="width:' + (fin / rec * 100) + '%"></i>' +
         '<i class="out" style="width:' + (out / rec * 100) + '%"></i></div>' +
-        '<div class="sub" style="margin-top:5px">Raw <b class="kg">' + kg(raw) + '</b> \u00b7 ' +
-        'Tayyar <b class="kg">' + kg(fin) + '</b> \u00b7 Gaya <b class="kg">' + kg(out) + '</b>' +
+        '<div class="sub" style="margin-top:5px">Hamare paas <b class="kg">' + kg(phy) + '</b> \u00b7 ' +
+        'Bina kata <b class="kg">' + kg(raw) + '</b> \u00b7 Tayyar <b class="kg">' + kg(fin) + '</b>' +
         (num(c.returned_weight) ? ' \u00b7 Wapas <b class="kg">' + kg(c.returned_weight) + '</b>' : '') +
         '</div></div>' +
         '<div class="amt"><span class="kg">' + kg(c.received_weight) + '</span><span class="tag">RECEIVED</span></div>' +
@@ -1356,7 +1396,10 @@
     saving = true; $('edSave').disabled = true; $('edSave').textContent = 'Saving\u2026';
     Promise.resolve().then(edSave).then(function (ok) {
       saving = false; $('edSave').disabled = false; $('edSave').textContent = 'Save';
-      if (ok !== false) { closeEd(); loadAll(); }
+      if (ok !== false) {
+        closeEd();
+        loadAll().then(function () { runCloseQueue(); });
+      }
     }).catch(function (e) {
       saving = false; $('edSave').disabled = false; $('edSave').textContent = 'Save';
       sayErr(e, 'Save');
@@ -1556,10 +1599,10 @@
   }
 
   /* ---------- Cutting Job ---------- */
-  var jobInputs = [], jobOutputs = [];
+  var jobInputs = [], jobOutputs = [], jobUnit = 'mm';
 
   function newJob() {
-    doc = null; jobInputs = []; jobOutputs = [];
+    doc = null; jobInputs = []; jobOutputs = []; jobUnit = 'mm';
     openEd('New Cutting Job', 'job', jobForm({ jdate:todayPKT(), warehouse_id:defWarehouse() }), saveJob);
     wireJob(false);
   }
@@ -1572,9 +1615,13 @@
     ]).then(function (r) {
       jobInputs  = (r[0].data || []).map(function (x) { return { _k:++lineSeq, id:x.id, coil_id:x.coil_id, input_weight:x.input_weight }; });
       jobOutputs = (r[1].data || []).map(function (x) {
-        return { _k:++lineSeq, id:x.id, coil_id:x.coil_id, width_mm:x.width_mm || '',
-                 pieces:x.pieces, output_weight:x.output_weight, remarks:x.remarks || '' };
+        return { _k:++lineSeq, id:x.id, coil_id:x.coil_id,
+                 width:x.width == null ? '' : x.width,
+                 length:x.length == null ? '' : x.length,
+                 pieces:x.pieces == null ? '' : x.pieces,
+                 output_weight:x.output_weight, remarks:x.remarks || '' };
       });
+      jobUnit = (r[1].data || [])[0] ? ((r[1].data || [])[0].size_unit || 'mm') : 'mm';
       var ro = j.status === 'cancelled' || !can('cutting_job_edit');
       openEd(j.jno || 'Job', 'job', jobForm(j, ro), ro ? null : saveJob,
              (j.status !== 'cancelled' && can('cutting_job_cancel')) ? cancelJob : null);
@@ -1609,14 +1656,23 @@
 
       '<div class="card"><div class="ttl">Input \u2014 kaun si coil, kitna maal</div>' +
       '<div class="lines" id="jobIn"></div>' +
+      '<div class="f" style="margin:10px 0 0"><div class="hint">Yeh sirf batata hai ke coil se kitna maal ' +
+      'kaatne ke liye uthaya. Party ke maal ka balance yahan se nahi ghatta \u2014 wo delivery challan ke ' +
+      'ACTUAL tole gaye weight se ghatta hai.</div></div>' +
       (ro ? '' : '<button class="addln" id="addJobIn" style="border-radius:0 0 9px 9px">+ Input coil</button>') +
       '</div>' +
 
-      '<div class="card"><div class="ttl">Cutting sizes \u2014 jo maal bana</div>' +
-      '<div class="lines" id="jobOut"><div class="szhead">' +
-        '<span class="szc-w">Width mm</span><span class="szc-q">Slits</span>' +
-        '<span class="szc-kg">Weight KG</span><span class="szc-r">Remarks</span><span class="szc-x"></span>' +
-        '</div></div>' +
+      '<div class="card">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">' +
+        '<div class="ttl" style="margin:0">Cutting sizes \u2014 jo maal bana</div>' +
+        '<div class="unitsw" id="jobUnitSw">' +
+          ['mm','ft','inch'].map(function (u) {
+            return '<button type="button" data-u="' + u + '"' +
+                   (jobUnit === u ? ' class="on"' : '') + (ro ? ' disabled' : '') + '>' + u + '</button>';
+          }).join('') +
+        '</div>' +
+      '</div>' +
+      '<div class="lines" id="jobOut"></div>' +
       (ro ? '' : '<button class="addln" id="addJobOut" style="border-radius:0 0 9px 9px">+ Cutting size</button>') +
       '<div id="jobBal"></div>' +
       '</div>';
@@ -1661,18 +1717,30 @@
   }
   function drawJobOutputs(ro) {
     var dis = ro ? ' disabled' : '';
-    var head = '<div class="szhead"><span class="szc-w">Width mm</span><span class="szc-q">Slits</span>' +
-      '<span class="szc-kg">Weight KG</span><span class="szc-r">Remarks</span><span class="szc-x"></span></div>';
     var coilOpts = jobInputs.filter(function (l) { return l.coil_id; });
-    $('jobOut').innerHTML = head + (jobOutputs.length ? jobOutputs.map(function (l) {
-      return '<div class="szrow" data-k="' + l._k + '">' +
-        '<span class="szc-w"><input class="n" data-f="width_mm" type="number" step="0.1" value="' + esc(l.width_mm) + '"' + dis + '></span>' +
-        '<span class="szc-q"><input class="n" data-f="pieces" type="number" step="1" value="' + esc(l.pieces) + '"' + dis + '></span>' +
-        '<span class="szc-kg"><input class="n" data-f="output_weight" type="number" step="0.001" value="' + esc(l.output_weight) + '"' + dis + '></span>' +
-        '<span class="szc-r"><input data-f="remarks" type="text" value="' + esc(l.remarks) + '"' + dis + '></span>' +
-        '<span class="szc-x">' + (ro ? '' : '<button class="rm" data-rm="' + l._k + '">\u00d7</button>') + '</span>' +
+    $('jobOut').innerHTML = jobOutputs.length ? jobOutputs.map(function (l, ix) {
+      return '<div class="ln szbox" data-k="' + l._k + '">' +
+        '<div class="top">' +
+          '<span class="szn">Size ' + (ix + 1) + '</span>' +
+          (ro ? '' : '<button class="rm" data-rm="' + l._k + '">\u00d7</button>') +
+        '</div>' +
+        '<div class="f2">' +
+          '<div class="f num" style="margin-bottom:7px"><label>Width ' + esc(jobUnit) + '</label>' +
+            '<input data-f="width" type="number" step="0.01" value="' + esc(l.width) + '"' + dis + '></div>' +
+          '<div class="f num" style="margin-bottom:7px"><label>Length ' + esc(jobUnit) + '</label>' +
+            '<input data-f="length" type="number" step="0.01" value="' + esc(l.length) + '" placeholder="\u2014"' + dis + '></div>' +
+        '</div>' +
+        '<div class="f2">' +
+          '<div class="f num" style="margin-bottom:0"><label>Pieces</label>' +
+            '<input data-f="pieces" type="number" step="1" value="' + esc(l.pieces) + '" placeholder="\u2014"' + dis + '></div>' +
+          '<div class="f num" style="margin-bottom:0"><label>Weight KG</label>' +
+            '<input data-f="output_weight" type="number" step="0.001" value="' + esc(l.output_weight) + '"' + dis + '></div>' +
+        '</div>' +
+        '<div class="f" style="margin:7px 0 0"><label>Remarks</label>' +
+          '<input data-f="remarks" type="text" value="' + esc(l.remarks) + '"' + dis + '></div>' +
         (coilOpts.length > 1
-          ? '<div style="flex-basis:100%;margin-top:6px"><select data-f="coil_id" style="width:100%;padding:6px 8px;border:1px solid var(--line);border-radius:6px;font-size:12.5px"' + dis + '>' +
+          ? '<div class="f" style="margin:7px 0 0"><label>Kis coil se</label>' +
+            '<select data-f="coil_id"' + dis + '>' +
             coilOpts.map(function (ci) {
               var c = byId(coils, ci.coil_id);
               return '<option value="' + esc(ci.coil_id) + '"' + (ci.coil_id === l.coil_id ? ' selected' : '') + '>' +
@@ -1680,9 +1748,11 @@
             }).join('') + '</select></div>'
           : '') +
         '</div>';
-    }).join('') : '<div class="szrow"><span class="hint" style="padding:4px">Abhi koi size nahi.</span></div>');
+    }).join('') : '<div class="ln"><div class="hint">Abhi koi size nahi. ' +
+      (ro ? '' : '"+ Cutting size" dabayein.') + '</div></div>';
     updateJobBalances();
   }
+
   function updateJobBalances() {
     var inW  = jobInputs.reduce(function (t, l) { return t + num(l.input_weight); }, 0);
     var outW = jobOutputs.reduce(function (t, l) { return t + num(l.output_weight); }, 0);
@@ -1695,7 +1765,7 @@
                           .reduce(function (t, x) { return t + num(origInputW[x.id] || 0); }, 0);
       var avail = num(c.raw_balance) + orig;
       var over = num(l.input_weight) > avail;
-      el.innerHTML = 'Coil mein <b class="kg">' + kg(avail) + ' KG</b> hai' +
+      el.innerHTML = 'Coil par <b class="kg">' + kg(avail) + ' KG</b> abhi kata nahi' +
         (over ? ' \u2014 <span class="neg">itna maal nahi hai</span>' : '');
     });
     var bal = $('jobBal'); if (!bal) return;
@@ -1748,14 +1818,14 @@
 
     $('jobOut').addEventListener('input', function (e) {
       var f = e.target.getAttribute('data-f'); if (!f) return;
-      var k = num(e.target.closest('.szrow').getAttribute('data-k'));
+      var k = num(e.target.closest('.szbox').getAttribute('data-k'));
       var l = jobOutputs.filter(function (x) { return x._k === k; })[0];
       if (l) { l[f] = e.target.value; markDirty(); }
       updateJobBalances();
     });
     $('jobOut').addEventListener('change', function (e) {
       if (e.target.getAttribute('data-f') !== 'coil_id') return;
-      var k = num(e.target.closest('.szrow').getAttribute('data-k'));
+      var k = num(e.target.closest('.szbox').getAttribute('data-k'));
       var l = jobOutputs.filter(function (x) { return x._k === k; })[0];
       if (l) { l.coil_id = e.target.value; markDirty(); }
     });
@@ -1768,11 +1838,20 @@
       var withCoil = jobInputs.filter(function (l) { return l.coil_id; });
       if (!withCoil.length) { toast('Pehle input coil chunein', true); return; }
       jobOutputs.push({ _k:++lineSeq, id:null, coil_id:withCoil[0].coil_id,
-                        width_mm:'', pieces:'', output_weight:'', remarks:'' });
+                        width:'', length:'', pieces:'', output_weight:'', remarks:'' });
       markDirty(); drawJobOutputs(false);
-      var rows = $('jobOut').querySelectorAll('.szrow');
+      var rows = $('jobOut').querySelectorAll('.szbox');
       var last = rows[rows.length - 1];
-      if (last) last.querySelector('input[data-f="width_mm"]').focus();
+      if (last) last.querySelector('input[data-f="width"]').focus();
+    });
+    // unit poore job par lagta hai — har size par alag nahi
+    if ($('jobUnitSw')) $('jobUnitSw').addEventListener('click', function (e) {
+      var u = e.target.getAttribute('data-u'); if (!u || u === jobUnit) return;
+      jobUnit = u; markDirty();
+      this.querySelectorAll('button').forEach(function (b) {
+        b.classList.toggle('on', b.getAttribute('data-u') === u);
+      });
+      drawJobOutputs(false);
     });
   }
   function saveJob() {
@@ -1808,9 +1887,11 @@
         if (r2.error) throw r2.error;
         if (!outs.length) return { error:null };
         return sb.from('cutting_job_outputs').insert(outs.map(function (l, i) {
-          return { job_id:job.id, coil_id:l.coil_id,
-                   width_mm:l.width_mm === '' ? null : num(l.width_mm),
-                   pieces:num(l.pieces), output_weight:num(l.output_weight),
+          return { job_id:job.id, coil_id:l.coil_id, size_unit:jobUnit,
+                   width:l.width === '' ? null : num(l.width),
+                   length:l.length === '' ? null : num(l.length),
+                   pieces:l.pieces === '' ? 0 : num(l.pieces),
+                   output_weight:num(l.output_weight),
                    remarks:l.remarks, line_no:i };
         }));
       }).then(function (r3) {
@@ -1845,7 +1926,7 @@
       // print ke liye har line ki cutting size (width/pieces) chahiye
       var outIds = (r.data || []).map(function (x) { return x.output_id; }).filter(Boolean);
       if (outIds.length) {
-        sb.from('cutting_job_outputs').select('id,width_mm,pieces').in('id', outIds)
+        sb.from('cutting_job_outputs').select('id,width,length,size_unit,pieces').in('id', outIds)
           .then(function (o) {
             (o.data || []).forEach(function (x) { readyCache[x.id] = x; });
           });
@@ -1968,12 +2049,13 @@
         if (!rows.length) { toast('Is party ka koi maal delivery ke liye tayyar nahi'); return; }
         openPicker('Delivery ke liye tayyar maal', rows, function (x) {
           return { key:x.output_id,
-                   nm:x.coil_serial + (x.width_mm ? ' \u00b7 ' + x.width_mm + ' mm' : ''),
+                   nm:x.coil_serial + (x.width ? ' \u00b7 ' + sizeText(x) : ''),
                    sub:x.jno + ' \u00b7 ' + (x.pieces || 0) + ' pcs',
                    amt:kg(x.pending_weight) + ' kg' };
         }, function (sel) {
           sel.forEach(function (x) {
-            readyCache[x.output_id] = { id:x.output_id, width_mm:x.width_mm, pieces:x.pieces };
+            readyCache[x.output_id] = { id:x.output_id, width:x.width, length:x.length,
+                                        size_unit:x.size_unit, pieces:x.pieces };
             chLines.push({ _k:++lineSeq, id:null, coil_id:x.coil_id, job_id:x.job_id,
                            output_id:x.output_id, expected_weight:x.pending_weight,
                            delivered_weight:x.pending_weight, variance_reason:'', remarks:'' });
@@ -2008,9 +2090,36 @@
       }).then(function (r2) {
         if (r2.error) throw r2.error;
         toast(doc ? 'Challan update ho gaya' : 'Challan ban gaya');
+        // Maal ja chuka — ab dekho kis coil par thora sa bacha reh gaya
+        return checkLowCoils(good.map(function (l) { return l.coil_id; }));
       });
     });
   }
+  /* Delivery ke baad: jin coils par threshold se kam maal bacha hai, un ke
+     baare mein user se poochho ke coil khatam ho gayi ya nahi. System khud
+     kabhi band nahi karta. Ek se zyada coils hon to bari bari poochha jata hai. */
+  function checkLowCoils(coilIds) {
+    if (!can('cutting_coil_close')) return;
+    var uniq = [];
+    coilIds.forEach(function (id) { if (id && uniq.indexOf(id) < 0) uniq.push(id); });
+    if (!uniq.length) return;
+    var thr = num(settings && settings.coil_finish_threshold_kg) || 200;
+    return sb.from('coils').select('*').in('id', uniq).then(function (r) {
+      if (r.error) return;
+      var low = (r.data || []).filter(function (c) {
+        return c.status === 'active' && num(c.pending_delivery) <= 0 &&
+               num(c.physical_balance) > 0 && num(c.physical_balance) <= thr;
+      });
+      if (low.length) { closeQueue = low; }
+    });
+  }
+  var closeQueue = [];
+  function runCloseQueue() {
+    if (!closeQueue.length) return;
+    var c = closeQueue.shift();
+    askCloseCoil(c);
+  }
+
   function cancelChallan() {
     confirmBox('Challan cancel karein?', 'Maal wapas "delivery ke liye tayyar" mein chala jayega.', 'Cancel karein')
       .then(function (ok) {
@@ -2467,7 +2576,8 @@
     var c = byId(coils, id) || byId(ownCoils, id); if (!c) return;
     doc = c;
     var thr = num(settings && settings.coil_finish_threshold_kg) || 200;
-    var raw = num(c.raw_balance), low = c.status === 'active' && raw > 0 && raw <= thr;
+    var raw = num(c.raw_balance), phy = num(c.physical_balance);
+    var low = c.status === 'active' && phy > 0 && phy <= thr;
 
     var html = '<div class="card"><div class="ttl">' + esc(c.coil_serial) + '</div>' +
       '<div class="f2"><div class="f"><label>Party</label>' +
@@ -2484,12 +2594,20 @@
       (c.party_coil_ref ? '<div class="f"><label>Party coil ref</label><input value="' + esc(c.party_coil_ref) + '" disabled></div>' : '') +
       '</div>' +
 
-      '<div class="card"><div class="ttl">Balance</div><div class="vbox" style="margin-top:0">' +
+      '<div class="card"><div class="ttl">Party ka maal hamare paas</div>' +
+      '<div class="vbox" style="margin-top:0">' +
       '<div class="r"><span>Received</span><span class="v kg">' + kg(c.received_weight) + '</span></div>' +
-      '<div class="r"><span>Process hua</span><span class="v kg">\u2212' + kg(c.consumed_weight) + '</span></div>' +
+      '<div class="r"><span>Delivery ho gayi</span><span class="v kg">\u2212' + kg(c.delivered_weight) + '</span></div>' +
       (num(c.returned_weight) ? '<div class="r"><span>Raw wapas</span><span class="v kg">\u2212' + kg(c.returned_weight) + '</span></div>' : '') +
       (num(c.closing_adjust_weight) ? '<div class="r"><span>Closing adjustment</span><span class="v kg">\u2212' + kg(c.closing_adjust_weight) + '</span></div>' : '') +
-      '<div class="r tot"><span>Raw balance</span><span class="v kg' + (low ? ' warn' : '') + '">' + kg(raw) + ' KG</span></div>' +
+      '<div class="r tot"><span>Abhi hamare paas</span><span class="v kg' + (low ? ' warn' : '') + '">' + kg(phy) + ' KG</span></div>' +
+      '<div class="hint">Yeh weight slip ke actual weight se ghatta hai \u2014 job ke weight se nahi.</div>' +
+      '</div></div>' +
+
+      '<div class="card"><div class="ttl">Kaam ki halat</div>' +
+      '<div class="vbox" style="margin-top:0">' +
+      '<div class="r"><span>Process ho chuka</span><span class="v kg">' + kg(c.consumed_weight) + '</span></div>' +
+      '<div class="r tot"><span>Abhi kata nahi</span><span class="v kg">' + kg(raw) + ' KG</span></div>' +
       '</div><div class="vbox">' +
       '<div class="r"><span>Bana hua maal</span><span class="v kg">' + kg(c.finished_weight) + '</span></div>' +
       '<div class="r"><span>Delivery ho gayi</span><span class="v kg">\u2212' + kg(c.delivered_weight) + '</span></div>' +
@@ -2537,9 +2655,9 @@
   var closingCoil = null;
   function askCloseCoil(c) {
     closingCoil = c;
-    var raw = num(c.raw_balance);
+    var raw = num(c.physical_balance);
     var thr = num(settings && settings.coil_finish_threshold_kg) || 200;
-    $('ccBody').textContent = 'Is coil mein hisaab ke mutabiq ' + kg(raw) + ' KG bacha hai' +
+    $('ccBody').textContent = 'Is coil ka hisaab ke mutabiq ' + kg(raw) + ' KG maal abhi hamare paas hai' +
       (raw > thr ? ' \u2014 yeh threshold (' + kg(thr) + ' KG) se zyada hai.' : '.') +
       ' Kya coil asal mein khatam ho chuki hai? Bacha hua weight closing adjustment ke tor par likha jayega.';
     $('ccReason').value = raw <= thr ? 'weighbridge' : 'other';
@@ -2549,6 +2667,7 @@
   $('ccNo').addEventListener('click', function () {
     $('closeCoilModal').classList.remove('on'); closingCoil = null;
     toast('Coil waise hi rehne di gayi');
+    runCloseQueue();
   });
   $('ccYes').addEventListener('click', function () {
     if (!closingCoil) return;
@@ -2563,7 +2682,8 @@
       var d = r.data || {};
       toast(d.status === 'already_closed' ? 'Coil pehle se band thi'
             : 'Coil band \u2014 ' + kg(d.closing_adjustment_kg) + ' KG adjustment');
-      closeEd(); loadAll();
+      closeEd();
+      loadAll().then(function () { runCloseQueue(); });
     }).catch(function (e) {
       $('ccYes').disabled = false; $('closeCoilModal').classList.remove('on'); sayErr(e, 'Coil band');
     });
@@ -2979,14 +3099,14 @@
     return '<div class="vbox" style="margin-top:10px">' +
       '<div class="r"><span>Coils</span><span class="v">' + mine.length + '</span></div>' +
       '<div class="r"><span>Received</span><span class="v kg">' + kg(s('received_weight')) + '</span></div>' +
-      '<div class="r"><span>Raw balance</span><span class="v kg">' + kg(s('raw_balance')) + '</span></div>' +
+      '<div class="r"><span>Abhi kata nahi</span><span class="v kg">' + kg(s('raw_balance')) + '</span></div>' +
       '<div class="r"><span>Process hua</span><span class="v kg">' + kg(s('consumed_weight')) + '</span></div>' +
       '<div class="r"><span>Delivery ke liye tayyar</span><span class="v kg">' + kg(s('pending_delivery')) + '</span></div>' +
       '<div class="r"><span>Delivery ho gayi</span><span class="v kg">' + kg(s('delivered_weight')) + '</span></div>' +
       '<div class="r"><span>Raw wapas</span><span class="v kg">' + kg(s('returned_weight')) + '</span></div>' +
       '<div class="r"><span>Variance / adjustment</span><span class="v kg">' + kg(s('closing_adjust_weight')) + '</span></div>' +
       '<div class="r tot"><span>Hamare paas physical maal</span><span class="v kg">' +
-        kg(s('raw_balance') + s('pending_delivery')) + ' KG</span></div>' +
+        kg(s('physical_balance')) + ' KG</span></div>' +
       '<div class="hint">Yeh quantity ledger hai. Party ka paisa wala ledger alag hai.</div></div>';
   }
 
@@ -3403,7 +3523,7 @@
       var ids = jl.map(function (j) { return j.id; });
       Promise.all([
         sb.from('cutting_job_inputs').select('job_id,coil_id,input_weight').in('job_id', ids),
-        sb.from('cutting_job_outputs').select('job_id,coil_id,width_mm,pieces,output_weight').in('job_id', ids)
+        sb.from('cutting_job_outputs').select('job_id,coil_id,width,length,size_unit,pieces,output_weight').in('job_id', ids)
       ]).then(function (r) {
         if (r[0].error || r[1].error) return fail();
         var ins = r[0].data || [], outs = r[1].data || [];
@@ -3448,7 +3568,7 @@
         } else if (k === 'size_production') {
           var bySize = {};
           outs.forEach(function (x) {
-            var key = (x.width_mm == null ? '\u2014' : x.width_mm) + '';
+            var key = sizeText(x) || '\u2014';
             bySize[key] = bySize[key] || { n:0, pcs:0, w:0 };
             bySize[key].n++; bySize[key].pcs += num(x.pieces); bySize[key].w += num(x.output_weight);
           });
@@ -3457,9 +3577,9 @@
             .map(function (key) {
               var x = bySize[key];
               T3.n += x.n; T3.pcs += x.pcs; T3.w += x.w;
-              return { s:key === '\u2014' ? '\u2014' : key + ' mm', n:x.n, pcs:kg(x.pcs), w:kg(x.w) };
+              return { s:key, n:x.n, pcs:kg(x.pcs), w:kg(x.w) };
             });
-          show(tbl([{k:'s',t:'Width'},{k:'n',t:'Lines',r:1},{k:'pcs',t:'Pieces',r:1},
+          show(tbl([{k:'s',t:'Cut size'},{k:'n',t:'Lines',r:1},{k:'pcs',t:'Pieces',r:1},
                     {k:'w',t:'Weight KG',r:1}], out3,
             { s:'Total', n:T3.n, pcs:kg(T3.pcs), w:kg(T3.w) }));
 
@@ -3535,11 +3655,11 @@
           T11.pcs += num(x.pieces); T11.w += num(x.pending_weight);
           return { c:'<span class="doc">' + esc(x.coil_serial) + '</span>',
                    p:esc(x.party_name), j:esc(x.jno),
-                   wd:x.width_mm ? x.width_mm + ' mm' : '', pcs:kg(x.pieces),
+                   wd:sizeText(x), pcs:kg(x.pieces),
                    o:kg(x.output_weight), d:kg(x.delivered_weight),
                    w:'<b>' + kg(x.pending_weight) + '</b>' };
         });
-        show(tbl([{k:'c',t:'Coil'},{k:'p',t:'Party'},{k:'j',t:'Job'},{k:'wd',t:'Width'},
+        show(tbl([{k:'c',t:'Coil'},{k:'p',t:'Party'},{k:'j',t:'Job'},{k:'wd',t:'Cut size'},
                   {k:'pcs',t:'Pcs',r:1},{k:'o',t:'Bana',r:1},{k:'d',t:'Gaya',r:1},
                   {k:'w',t:'Tayyar',r:1}], out11,
           { c:'Total', p:'', j:'', wd:'', pcs:kg(T11.pcs), o:'', d:'', w:kg(T11.w) }));
@@ -3793,7 +3913,7 @@
 
   function showErr(id, msg) { var el = $(id); el.textContent = msg; el.classList.toggle('on', !!msg); }
   function makeClient(url, key) {
-    return window.supabase.createClient(url, key, { auth:{ persistSession:true, autoRefreshToken:true } });
+    return window.supabase.createClient(url, key, { auth:{ persistSession:true, autoRefreshToken:false } });
   }
   $('cGo').addEventListener('click', function () {
     var url = $('cUrl').value.trim().replace(/\/+$/, ''), key = $('cKey').value.trim();
@@ -3994,7 +4114,7 @@
           (j ? '<div style="font-size:8.5pt;color:#9C9384">' + esc(j.jno) + '</div>' : '') + '</td>' +
         '<td>' + esc(c ? [c.material_type, c.grade].filter(Boolean).join(' / ') : '') + '</td>' +
         '<td class="c">' + esc(c && c.thickness_mm ? c.thickness_mm : '') + '</td>' +
-        '<td class="c">' + esc(out && out.width_mm ? out.width_mm : (c && c.width_mm ? c.width_mm : '')) + '</td>' +
+        '<td class="c">' + esc(out ? sizeText(out) : (c && c.width_mm ? c.width_mm + ' mm' : '')) + '</td>' +
         '<td class="r">' + (out && num(out.pieces) ? kg(out.pieces) : '') + '</td>' +
         '<td class="r">' + kg(l.expected_weight) + '</td>' +
         '<td class="r">' + kg(l.delivered_weight) + '</td></tr>';
@@ -4019,7 +4139,7 @@
         ['Warehouse', nameOf(warehouses, d.warehouse_id, '')]
       ])) +
       '<table><thead><tr><th class="c" style="width:8mm">#</th><th>Coil</th><th>Material</th>' +
-      '<th class="c" style="width:16mm">Thk mm</th><th class="c" style="width:16mm">Width mm</th>' +
+      '<th class="c" style="width:16mm">Thk mm</th><th class="c" style="width:24mm">Cut size</th>' +
       '<th class="r" style="width:16mm">Pcs</th><th class="r" style="width:24mm">Expected</th>' +
       '<th class="r" style="width:24mm">Delivered</th></tr></thead>' +
       '<tbody>' + rows + '</tbody><tfoot>' + foot + '</tfoot></table>' +
@@ -4030,7 +4150,14 @@
 
     doPrint($('sheet'), fileSafe(d.dno) + '-' + fileSafe(p ? p.name : 'Party') + '-' + fileDate(d.ddate));
   }
-  var readyCache = {};   // output_id -> { width_mm, pieces } — challan print ke liye
+  var readyCache = {};   // output_id -> cutting size ki tafseel, challan print ke liye
+  /* "580 x 2440 mm" ya sirf "580 mm" — length na ho to sirf width */
+  function sizeText(o) {
+    if (!o) return '';
+    var u = o.size_unit || 'mm';
+    if (o.width == null || o.width === '') return '';
+    return num(o.length) ? (o.width + ' \u00d7 ' + o.length + ' ' + u) : (o.width + ' ' + u);
+  }
 
   /* ---------- Service Invoice ---------- */
   function printInvoice() {

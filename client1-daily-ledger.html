@@ -686,6 +686,36 @@
   var $ = function (id) { return document.getElementById(id); };
   var APP = window.APP_CONFIG;
 
+  /* ---------- Session ka refresh ----------
+     Chaaron apps ek hi browser mein, ek hi jagah session rakhti hain. Agar
+     chaaron ek saath token refresh karein to Supabase ka refresh token (jo
+     sirf ek dafa chalta hai) ek app istemaal kar leti hai aur baqi teen ka
+     session toot jata hai — is liye bar bar sign-in maangta tha.
+     Ab refresh sirf wohi app karti hai jo us waqt khuli ho.               */
+  var autoRefreshOn = false;
+  function setAutoRefresh(on) {
+    if (!sb || !sb.auth || autoRefreshOn === on) return;
+    autoRefreshOn = on;
+    try {
+      if (on) { sb.auth.getSession().then(function () { sb.auth.startAutoRefresh(); }); }
+      else { sb.auth.stopAutoRefresh(); }
+    } catch (e) {}
+  }
+
+  /* Shell batata hai ke yeh app abhi khuli hui hai ya peeche chali gayi.
+     Session ka refresh sirf khuli app karti hai. */
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.msg === 'active') setAutoRefresh(!!e.data.on);
+  });
+  /* Shell ke baghair (seedha URL se) khuli ho to bhi refresh chalna chahiye */
+  if (window.self === window.top) {
+    document.addEventListener('visibilitychange', function () {
+      setAutoRefresh(document.visibilityState === 'visible');
+    });
+  }
+
+
+
   /* ---------- Yaad rakhe hue usernames ----------
      Login se pehle app_users table padhi nahi ja sakti (RLS rokti hai, aur
      yeh theek hai — warna koi bhi saare usernames nikaal leta). Is liye
@@ -747,7 +777,7 @@
   function makeClient(cfg) {
     if (!window.supabase || !cfg) return null;
     return window.supabase.createClient(cfg.url, cfg.key, {
-      auth: { persistSession: true, autoRefreshToken: true }
+      auth: { persistSession: true, autoRefreshToken: false }
     });
   }
 

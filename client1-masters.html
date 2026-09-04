@@ -983,6 +983,36 @@
   var $ = function (id) { return document.getElementById(id); };
   var APP = window.APP_CONFIG;
 
+  /* ---------- Session ka refresh ----------
+     Chaaron apps ek hi browser mein, ek hi jagah session rakhti hain. Agar
+     chaaron ek saath token refresh karein to Supabase ka refresh token (jo
+     sirf ek dafa chalta hai) ek app istemaal kar leti hai aur baqi teen ka
+     session toot jata hai — is liye bar bar sign-in maangta tha.
+     Ab refresh sirf wohi app karti hai jo us waqt khuli ho.               */
+  var autoRefreshOn = false;
+  function setAutoRefresh(on) {
+    if (!sb || !sb.auth || autoRefreshOn === on) return;
+    autoRefreshOn = on;
+    try {
+      if (on) { sb.auth.getSession().then(function () { sb.auth.startAutoRefresh(); }); }
+      else { sb.auth.stopAutoRefresh(); }
+    } catch (e) {}
+  }
+
+  /* Shell batata hai ke yeh app abhi khuli hui hai ya peeche chali gayi.
+     Session ka refresh sirf khuli app karti hai. */
+  window.addEventListener('message', function (e) {
+    if (e.data && e.data.msg === 'active') setAutoRefresh(!!e.data.on);
+  });
+  /* Shell ke baghair (seedha URL se) khuli ho to bhi refresh chalna chahiye */
+  if (window.self === window.top) {
+    document.addEventListener('visibilitychange', function () {
+      setAutoRefresh(document.visibilityState === 'visible');
+    });
+  }
+
+
+
   /* ---------- Yaad rakhe hue usernames ----------
      Login se pehle app_users table padhi nahi ja sakti (RLS rokti hai, aur
      yeh theek hai — warna koi bhi saare usernames nikaal leta). Is liye
@@ -1020,6 +1050,11 @@
   };
 
   var sb = null, tab = 'parties', editing = null, dirty = false;
+  /* Naya chuna hua logo YAHAN rehta hai, `editing` mein nahi. `editing` wo
+     snapshot hai jo smart-merge ko batata hai ke row pehle kaisi thi — us
+     mein naya logo likh dene se system samajhta tha ke logo badla hi nahi,
+     aur purana logo wapas rakh deta tha. null = logo ko haath nahi lagaya. */
+  var pendingLogo = null;
   var db = { parties: [], items: [], companies: [] };
 
   /* ---------- helpers ---------- */
@@ -2445,6 +2480,7 @@
   });
 
   function openEditor(rec) {
+    pendingLogo = null;
     editing = rec ? JSON.parse(JSON.stringify(rec))
                   : (tab === 'parties' ? blankParty() : tab === 'companies' ? blankCompany() : blankItem());
     dirty = false;
@@ -2622,7 +2658,7 @@
       var f = this.files && this.files[0]; if (!f) return;
       pick.disabled = true; pick.textContent = 'Working\u2026';
       shrinkLogo(f).then(function (dataUrl) {
-        editing.logo = dataUrl; dirty = true;
+        pendingLogo = dataUrl; dirty = true;
         $('logoPv').innerHTML = '<img src="' + esc(dataUrl) + '" alt="">';
         pick.disabled = false; pick.textContent = 'Change image';
         if (!$('logoClr')) {
@@ -2642,7 +2678,7 @@
   function wireLogoClear() {
     var clr = $('logoClr'); if (!clr) return;
     clr.onclick = function () {
-      editing.logo = ''; dirty = true;
+      pendingLogo = ''; dirty = true;
       $('logoPv').innerHTML = '<div class="no">No logo</div>';
       $('logoPick').textContent = 'Choose image';
       clr.remove();
@@ -2817,7 +2853,8 @@
     if (tab === 'companies') {
       return { name:readVal('eName'), address:readVal('eAddr'), city:readVal('eCity'),
                phone:readVal('ePhone'), email:readVal('eMail'), ntn:readVal('eNtn'),
-               strn:readVal('eStrn'), logo:(editing && editing.logo) || '',
+               strn:readVal('eStrn'),
+               logo:(pendingLogo !== null ? pendingLogo : ((editing && editing.logo) || '')),
                is_default:$('eDefault').classList.contains('on'),
                notes:readVal('eNotes'), active:act };
     }
@@ -4077,7 +4114,7 @@
   }
   function makeClient(url, key) {
     return window.supabase.createClient(url, key, {
-      auth: { persistSession: true, autoRefreshToken: true }
+      auth: { persistSession: true, autoRefreshToken: false }
     });
   }
   $('cGo').addEventListener('click', function () {
