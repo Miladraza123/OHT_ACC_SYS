@@ -7,7 +7,7 @@
    nahi. Version badhane ke liye sirf CACHE_VERSION number badlein.
    ═══════════════════════════════════════════════════════════════ */
 
-var CACHE_VERSION = 'client1-shell-v1';
+var CACHE_VERSION = 'client1-shell-v2';
 
 var SHELL_FILES = [
   './',
