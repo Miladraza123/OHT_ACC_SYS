@@ -1,0 +1,39 @@
+# ---- Secrets ----
+# Is project mein koi secret file honi hi nahi chahiye. Supabase URL aur
+# publishable (anon) key user app ke andar Connect screen par daalta hai
+# aur wo sirf uske browser ki localStorage mein rehti hai.
+# Yeh entries ihtiyat ke tor par hain.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+service-role*.txt
+secrets/
+
+# ---- Supabase CLI ----
+.supabase/
+supabase/.temp/
+
+# ---- Backups / dumps ----
+# DB dump mein asal karobari data hota hai — repo mein kabhi nahi.
+*.dump
+*.sql.gz
+backup-*.xlsx
+data.sql
+roles.sql
+
+# ---- OS ----
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ---- Editors ----
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---- Node (agar aage koi tooling add ho) ----
+node_modules/
+npm-debug.log*
