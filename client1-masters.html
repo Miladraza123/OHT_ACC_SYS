@@ -3083,10 +3083,15 @@
     var isNew = !(editing && editing.id);
     var recId = isNew ? uuid() : editing.id;
     var label = body.name;
-    var priorRow = isNew ? null : editing;
+    /* Editor server se pehle band ho jata hai (local-first), aur closeEditor()
+       `editing` ko null kar deta hai. Is liye "badalne se pehle row aisi thi"
+       wala snapshot YAHIN mehfooz karna zaroori hai — warna merge ko null
+       milta tha aur wo har badle hue field par conflict de deta tha. */
+    var priorRow = isNew ? null : JSON.parse(JSON.stringify(editing));
+    var priorVersion = isNew ? null : (editing.version || 1);
 
     // Local-first: turant screen par dikhado, editor band karo — internet ka wait nahi
-    var optimisticRow = Object.assign({}, priorRow || {}, body, { id:recId, version:isNew ? 1 : (editing.version || 1) });
+    var optimisticRow = Object.assign({}, priorRow || {}, body, { id:recId, version:isNew ? 1 : priorVersion });
     if (isNew) db[tab].push(optimisticRow);
     else db[tab] = db[tab].map(function (r) { return r.id === recId ? optimisticRow : r; });
     cacheSave(tab, db[tab]);
@@ -3097,8 +3102,8 @@
 
     if (!navigator.onLine) {
       offQAdd({ opId:uuid(), table:tab, op:isNew ? 'insert' : 'update', recordId:recId,
-                baseVersion:isNew ? null : (editing.version || 1),
-                original:isNew ? null : editing,
+                baseVersion:priorVersion,
+                original:priorRow,
                 payload:isNew ? Object.assign({ id:recId }, body) : body, label:label });
       syncNote('Offline \u2014 save queued', '#B08A3E');
       return;
@@ -3118,10 +3123,15 @@
       delete mergeBody.is_default;
       delete mergeBody.logo;
     }
+    var retried = false;
+    function runMerge(original) {
+      return sb.rpc('smart_merge_update',
+        { p_table:tab, p_id:recId, p_original:original, p_new:mergeBody });
+    }
     var q = isNew
       ? sb.from(tab).insert(Object.assign({ id:recId }, body)).select()
-      : sb.rpc('smart_merge_update', { p_table:tab, p_id:recId, p_original:editing, p_new:mergeBody });
-    q.then(function (res) {
+      : runMerge(priorRow);
+    q.then(function handleRes(res) {
       if (res.error) throw res.error;
       if (isNew) {
         var row0 = (res.data || [])[0];
@@ -3132,18 +3142,17 @@
       }
       var result = res.data;   // smart_merge_update ka jawab: {status, row} ya {status:'conflict', fields, current}
       if (result.status === 'conflict') {
-        /* Database conflict ke saath TAAZA row bhi bhejta hai. Usay editor ka
-           naya baseline bana dete hain, warna dobara Save dabane par wohi
-           purana baseline jata tha aur wohi conflict phir aata tha \u2014
-           hamesha ke liye. Aap ki likhi hui values form mein waise hi rehti
-           hain, sirf "pehle kya tha" wala hisaab taaza ho jata hai. */
-        if (result.current) {
-          editing = JSON.parse(JSON.stringify(result.current));
-          db[tab] = db[tab].map(function (x) { return x.id === recId ? result.current : x; });
-          cacheSave(tab, db[tab]);
+        /* Database conflict ke saath TAAZA row bhi bhejta hai. Editor to band
+           ho chuka hota hai, is liye user se dobara Save kehna bemaani hai \u2014
+           system khud taaza baseline le kar ek dafa dobara koshish karta hai.
+           Jo fields user ne badle wo lag jate hain; jo nahi chhue un par
+           doosre ki tabdeeli bachi rehti hai. */
+        if (!retried && result.current) {
+          retried = true;
+          return runMerge(result.current).then(handleRes);
         }
-        toast('"' + label + '" beech mein badal gaya tha (' + result.fields.join(', ') +
-              '). Taaza data le liya hai \u2014 Save dobara dabayein.', true);
+        toast('"' + label + '" kisi aur ne bhi isi waqt badla (' + result.fields.join(', ') +
+              ') \u2014 aapki wo tabdeeli chhoot gayi, taaza dekh kar dobara karein', true);
         loadAll();
         return;
       }
@@ -3176,9 +3185,10 @@
       render();
     }).catch(function (e) {
       if (isNetErr(e)) {
+        // Yahan bhi snapshot se — editing tab tak null ho chuka hota hai
         offQAdd({ opId:uuid(), table:tab, op:isNew ? 'insert' : 'update', recordId:recId,
-                  baseVersion:isNew ? null : (editing.version || 1),
-                  original:isNew ? null : editing,
+                  baseVersion:priorVersion,
+                  original:priorRow,
                   payload:isNew ? Object.assign({ id:recId }, body) : body, label:label });
         syncNote('Offline \u2014 save queued', '#B08A3E');
       } else {
