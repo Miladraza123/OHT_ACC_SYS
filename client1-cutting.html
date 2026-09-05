@@ -3967,7 +3967,7 @@
   function afterConnect() {
     sb.auth.getSession().then(function (res) {
       if (res.data && res.data.session) start();
-      else fillUserList('lMail','userList'); $('gateLogin').classList.add('on');
+      else { fillUserList('lMail','userList'); $('gateLogin').classList.add('on'); }
     }).catch(function () { fillUserList('lMail','userList'); $('gateLogin').classList.add('on'); });
   }
 

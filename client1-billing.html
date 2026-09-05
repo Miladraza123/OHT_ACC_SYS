@@ -2928,7 +2928,7 @@
     sb.auth.getSession().then(function (res) {
       if (res.data && res.data.session) start();
       else if (!navigator.onLine && hasCachedAuthToken()) start();
-      else fillUserList('lMail','userList'); $('gateLogin').classList.add('on');
+      else { fillUserList('lMail','userList'); $('gateLogin').classList.add('on'); }
     }).catch(function (e) {
       if (isClockErr(e) && attempt < 5) { setTimeout(function () { afterConnect(attempt + 1); }, 3000); return; }
       if (!navigator.onLine && hasCachedAuthToken()) { start(); return; }
