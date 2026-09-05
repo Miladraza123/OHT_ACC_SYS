@@ -1469,6 +1469,9 @@
   function itemSub(i) {
     var bits = ['per ' + esc(i.unit || 'pcs')];
     if (Number(i.sale_rate)) bits.push(cur() + ' ' + fmt(i.sale_rate));
+    /* Avg cost costing engine se aata hai — har purchase par khud badalta
+       hai (loading/cartage samet). Yeh wo bhaao hai jis par maal pada hai. */
+    if (Number(i.avg_cost)) bits.push('cost ' + cur() + ' ' + fmt(i.avg_cost));
     if (Number(i.tax_pct)) bits.push(fmt(i.tax_pct) + '% tax');
     return bits.join(' · ');
   }
@@ -1634,6 +1637,20 @@
     '<div class="f"><label>HS code</label><input id="eHs" type="text" value="' + esc(r.hs_code) + '" autocomplete="off">' +
       '<div class="hint">Only needed on a sales tax invoice.</div></div>' +
 
+    (Number(r.avg_cost) || Number(r.stock_qty)
+      ? '<div class="grp">Abhi ka stock</div>' +
+        '<div class="sum" style="margin-bottom:14px">' +
+          '<div class="sline"><span class="k">Stock</span><span class="v">' +
+            fmt(r.stock_qty || 0) + ' ' + esc(r.unit || '') + '</span></div>' +
+          '<div class="sline"><span class="k">Average cost</span><span class="v">' +
+            cur() + ' ' + fmt(r.avg_cost || 0) + '</span></div>' +
+          '<div class="sline big"><span class="k">Stock value</span><span class="v">' +
+            cur() + ' ' + fmt((Number(r.stock_qty) || 0) * (Number(r.avg_cost) || 0)) + '</span></div>' +
+        '</div>' +
+        '<div class="f"><div class="hint">Yeh teenon system khud ginta hai \u2014 har purchase, ' +
+        'sale aur return par. Seedha edit nahi hote. Average cost mein loading/cartage ' +
+        'jaise kharche bhi shamil hote hain.</div></div>'
+      : '') +
     '<div class="grp">Opening stock</div>' +
     '<div class="f2">' +
       '<div class="f num"><label>Quantity</label><input id="eOQty" type="text" inputmode="decimal" value="' +
@@ -3787,11 +3804,30 @@
       sb.from('purchase_orders').select('id', { count:'exact', head:true }),
       sb.from('sales_returns').select('id', { count:'exact', head:true }),
       sb.from('parties').select('id', { count:'exact', head:true }),
-      sb.from('items').select('id', { count:'exact', head:true })
+      sb.from('items').select('id', { count:'exact', head:true }),
+      // Cutting / Processing ka data bhi mitta hai \u2014 to ginti mein bhi dikhna chahiye
+      sb.from('coils').select('id', { count:'exact', head:true }),
+      sb.from('cutting_jobs').select('id', { count:'exact', head:true }),
+      sb.from('delivery_challans').select('id', { count:'exact', head:true }),
+      sb.from('service_invoices').select('id', { count:'exact', head:true }),
+      sb.from('material_inwards').select('id', { count:'exact', head:true }),
+      sb.from('material_returns').select('id', { count:'exact', head:true }),
+      sb.from('stock_conversions').select('id', { count:'exact', head:true })
     ]).then(function (r) {
       var c = r.map(function (x) { return x.count || 0; });
+      /* tarteeb: 7 coils, 8 jobs, 9 challans, 10 service invoices,
+                  11 inwards, 12 material returns, 13 conversions */
+      var cut = [];
+      if (c[11]) cut.push(c[11] + ' inwards');
+      if (c[7])  cut.push(c[7] + ' coils');
+      if (c[8])  cut.push(c[8] + ' cutting jobs');
+      if (c[9])  cut.push(c[9] + ' challans');
+      if (c[12]) cut.push(c[12] + ' material returns');
+      if (c[10]) cut.push(c[10] + ' service invoices');
+      if (c[13]) cut.push(c[13] + ' conversions');
       $('wipeCounts').innerHTML =
         c[0] + ' bills, ' + c[1] + ' ledger din, ' + c[2] + ' quotations, ' + c[3] + ' POs, ' + c[4] + ' returns' +
+        (cut.length ? '<br>' + cut.join(', ') : '') +
         '<br><span id="wipeMastersNote" style="display:none">+ ' + c[5] + ' parties, ' + c[6] + ' items</span>';
     }).catch(function () { $('wipeCounts').textContent = ''; });
   }

@@ -1830,6 +1830,9 @@
       .eq('id', recId).select().then(function (r3) {
         var saved = Object.assign({}, row || head, r3.data ? r3.data[0] : {}, { id:recId, lines:finalLines || [] });
         returns = returns.map(function (x) { return x.id === recId ? saved : x; });
+        // Return se item ka stock aur cost badalta hai — Masters ko bata do,
+        // warna wahan ki list purani hi rehti hai jab tak refresh na karein
+        try { window.parent.postMessage({ msg:'refresh', kind:'bills' }, '*'); } catch (err) {}
         syncNote('Saved', '#7DC9A9');
         render();
       });
@@ -1954,6 +1957,7 @@
       }
       sb.from('sales_returns').update({ deleted_at:new Date().toISOString() }).eq('id', recId).then(function (res) {
         if (res.error) throw res.error;
+        try { window.parent.postMessage({ msg:'refresh', kind:'bills' }, '*'); } catch (err) {}
         syncNote('');
       }).catch(function (e) {
         if (isNetErr(e)) {

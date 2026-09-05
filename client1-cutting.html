@@ -1615,10 +1615,10 @@
   }
 
   /* ---------- Cutting Job ---------- */
-  var jobInputs = [], jobOutputs = [], jobUnit = 'mm';
+  var jobInputs = [], jobOutputs = [];
 
   function newJob() {
-    doc = null; jobInputs = []; jobOutputs = []; jobUnit = 'mm';
+    doc = null; jobInputs = []; jobOutputs = [];
     openEd('New Cutting Job', 'job', jobForm({ jdate:todayPKT(), warehouse_id:defWarehouse() }), saveJob);
     wireJob(false);
   }
@@ -1632,12 +1632,12 @@
       jobInputs  = (r[0].data || []).map(function (x) { return { _k:++lineSeq, id:x.id, coil_id:x.coil_id, input_weight:x.input_weight }; });
       jobOutputs = (r[1].data || []).map(function (x) {
         return { _k:++lineSeq, id:x.id, coil_id:x.coil_id,
+                 size_unit:x.size_unit || 'mm',
                  width:x.width == null ? '' : x.width,
                  length:x.length == null ? '' : x.length,
                  pieces:x.pieces == null ? '' : x.pieces,
                  output_weight:x.output_weight, remarks:x.remarks || '' };
       });
-      jobUnit = (r[1].data || [])[0] ? ((r[1].data || [])[0].size_unit || 'mm') : 'mm';
       var ro = j.status === 'cancelled' || !can('cutting_job_edit');
       openEd(j.jno || 'Job', 'job', jobForm(j, ro), ro ? null : saveJob,
              (j.status !== 'cancelled' && can('cutting_job_cancel')) ? cancelJob : null);
@@ -1678,16 +1678,7 @@
       (ro ? '' : '<button class="addln" id="addJobIn" style="border-radius:0 0 9px 9px">+ Input coil</button>') +
       '</div>' +
 
-      '<div class="card">' +
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:10px">' +
-        '<div class="ttl" style="margin:0">Cutting sizes \u2014 jo maal bana</div>' +
-        '<div class="unitsw" id="jobUnitSw">' +
-          ['mm','ft','inch'].map(function (u) {
-            return '<button type="button" data-u="' + u + '"' +
-                   (jobUnit === u ? ' class="on"' : '') + (ro ? ' disabled' : '') + '>' + u + '</button>';
-          }).join('') +
-        '</div>' +
-      '</div>' +
+      '<div class="card"><div class="ttl">Cutting sizes \u2014 jo maal bana</div>' +
       '<div class="lines" id="jobOut"></div>' +
       (ro ? '' : '<button class="addln" id="addJobOut" style="border-radius:0 0 9px 9px">+ Cutting size</button>') +
       '<div id="jobBal"></div>' +
@@ -1738,12 +1729,19 @@
       return '<div class="ln szbox" data-k="' + l._k + '">' +
         '<div class="top">' +
           '<span class="szn">Size ' + (ix + 1) + '</span>' +
+          '<div class="unitsw" data-unit="' + l._k + '">' +
+            ['mm','ft','inch'].map(function (u) {
+              return '<button type="button" data-u="' + u + '"' +
+                     ((l.size_unit || 'mm') === u ? ' class="on"' : '') + (ro ? ' disabled' : '') +
+                     '>' + u + '</button>';
+            }).join('') +
+          '</div>' +
           (ro ? '' : '<button class="rm" data-rm="' + l._k + '">\u00d7</button>') +
         '</div>' +
         '<div class="f2">' +
-          '<div class="f num" style="margin-bottom:7px"><label>Width ' + esc(jobUnit) + '</label>' +
+          '<div class="f num" style="margin-bottom:7px"><label>Width</label>' +
             '<input data-f="width" type="number" step="0.01" value="' + esc(l.width) + '"' + dis + '></div>' +
-          '<div class="f num" style="margin-bottom:7px"><label>Length ' + esc(jobUnit) + '</label>' +
+          '<div class="f num" style="margin-bottom:7px"><label>Length</label>' +
             '<input data-f="length" type="number" step="0.01" value="' + esc(l.length) + '" placeholder="\u2014"' + dis + '></div>' +
         '</div>' +
         '<div class="f2">' +
@@ -1853,21 +1851,27 @@
     if ($('addJobOut')) $('addJobOut').addEventListener('click', function () {
       var withCoil = jobInputs.filter(function (l) { return l.coil_id; });
       if (!withCoil.length) { toast('Pehle input coil chunein', true); return; }
+      var lastSz = jobOutputs[jobOutputs.length - 1];
       jobOutputs.push({ _k:++lineSeq, id:null, coil_id:withCoil[0].coil_id,
+                        size_unit:lastSz ? (lastSz.size_unit || 'mm') : 'mm',
                         width:'', length:'', pieces:'', output_weight:'', remarks:'' });
       markDirty(); drawJobOutputs(false);
       var rows = $('jobOut').querySelectorAll('.szbox');
       var last = rows[rows.length - 1];
       if (last) last.querySelector('input[data-f="width"]').focus();
     });
-    // unit poore job par lagta hai — har size par alag nahi
-    if ($('jobUnitSw')) $('jobUnitSw').addEventListener('click', function (e) {
-      var u = e.target.getAttribute('data-u'); if (!u || u === jobUnit) return;
-      jobUnit = u; markDirty();
-      this.querySelectorAll('button').forEach(function (b) {
+    // Har size ka apna unit — ek hi job mein kuch sizes mm mein aur
+    // kuch feet mein ho sakti hain
+    $('jobOut').addEventListener('click', function (e) {
+      var u = e.target.getAttribute('data-u'); if (!u) return;
+      var box = e.target.closest('[data-unit]'); if (!box) return;
+      var k = num(box.getAttribute('data-unit'));
+      var l = jobOutputs.filter(function (x) { return x._k === k; })[0];
+      if (!l || l.size_unit === u) return;
+      l.size_unit = u; markDirty();
+      box.querySelectorAll('button').forEach(function (b) {
         b.classList.toggle('on', b.getAttribute('data-u') === u);
       });
-      drawJobOutputs(false);
     });
   }
   function saveJob() {
@@ -1904,7 +1908,7 @@
         if (r2.error) throw r2.error;
         if (!outs.length) return { error:null };
         return sb.from('cutting_job_outputs').insert(outs.map(function (l, i) {
-          return { job_id:job.id, coil_id:l.coil_id, size_unit:jobUnit,
+          return { job_id:job.id, coil_id:l.coil_id, size_unit:l.size_unit || 'mm',
                    width:l.width === '' ? null : num(l.width),
                    length:l.length === '' ? null : num(l.length),
                    pieces:l.pieces === '' ? 0 : num(l.pieces),
