@@ -1985,26 +1985,43 @@
           '<div class="f num" style="margin-bottom:0"><label>Actual delivered (KG)</label>' +
             '<input data-f="delivered_weight" type="number" step="0.001" value="' + esc(l.delivered_weight) + '"' + dis + '></div>' +
         '</div>' +
-        (Math.abs(v) > 0.0001
-          ? '<div class="f" style="margin:8px 0 0"><label>Variance ' +
-            '<span class="' + (v < 0 ? 'neg' : 'pos') + '">' + (v > 0 ? '+' : '') + kg(v) + ' KG</span> \u2014 wajah</label>' +
-            '<select data-f="variance_reason"' + dis + '>' +
-              '<option value="">\u2014 Abhi tay nahi \u2014</option>' +
-              ['weighbridge|Weighbridge ka farq','scale|Scale ka farq','handling|Handling mein kami',
-               'leftover|Chhota tukra','scrap|Confirmed scrap','other|Koi aur'].map(function (o) {
-                var p = o.split('|');
-                return '<option value="' + p[0] + '"' + (l.variance_reason === p[0] ? ' selected' : '') + '>' + p[1] + '</option>';
-              }).join('') + '</select>' +
-            '<div class="hint">Farq record ho raha hai. Jab tak aap khud "scrap" na chunein, ' +
-            'system isay scrap nahi maanta.</div></div>'
-          : '') +
+        '<div class="f" data-vbox="' + l._k + '" style="margin:8px 0 0;display:' +
+          (Math.abs(v) > 0.0001 ? 'block' : 'none') + '"><label>Variance ' +
+          '<span data-vtxt="' + l._k + '" class="' + (v < 0 ? 'neg' : 'pos') + '">' +
+          (v > 0 ? '+' : '') + kg(v) + ' KG</span> \u2014 wajah</label>' +
+          '<select data-f="variance_reason"' + dis + '>' +
+            '<option value="">\u2014 Abhi tay nahi \u2014</option>' +
+            ['weighbridge|Weighbridge ka farq','scale|Scale ka farq','handling|Handling mein kami',
+             'leftover|Chhota tukra','scrap|Confirmed scrap','other|Koi aur'].map(function (o) {
+              var p = o.split('|');
+              return '<option value="' + p[0] + '"' + (l.variance_reason === p[0] ? ' selected' : '') + '>' + p[1] + '</option>';
+            }).join('') + '</select>' +
+          '<div class="hint">Farq record ho raha hai. Jab tak aap khud "scrap" na chunein, ' +
+          'system isay scrap nahi maanta.</div></div>' +
         '</div>';
     }).join('') : '<div class="ln"><div class="hint">Koi maal add nahi kiya. ' +
       (val('dParty') ? '"+ Ready material" dabayein.' : 'Pehle party chunein.') + '</div></div>';
 
+    updateChTotals();
+  }
+
+  /* Sirf numbers badalte hain — poori list dobara NAHI banti. Warna har
+     harf par input box mit jata hai aur keyboard band ho jata hai. */
+  function updateChTotals() {
+    chLines.forEach(function (l) {
+      var v = num(l.delivered_weight) - num(l.expected_weight);
+      var box = document.querySelector('[data-vbox="' + l._k + '"]');
+      var txt = document.querySelector('[data-vtxt="' + l._k + '"]');
+      if (box) box.style.display = Math.abs(v) > 0.0001 ? 'block' : 'none';
+      if (txt) {
+        txt.className = v < 0 ? 'neg' : 'pos';
+        txt.textContent = (v > 0 ? '+' : '') + kg(v) + ' KG';
+      }
+    });
     var e = chLines.reduce(function (t, l) { return t + num(l.expected_weight); }, 0);
     var a = chLines.reduce(function (t, l) { return t + num(l.delivered_weight); }, 0);
-    $('chBal').innerHTML = '<div class="vbox">' +
+    var bal = $('chBal'); if (!bal) return;
+    bal.innerHTML = '<div class="vbox">' +
       '<div class="r"><span>Expected</span><span class="v kg">' + kg(e) + ' KG</span></div>' +
       '<div class="r"><span>Actual delivery</span><span class="v kg">' + kg(a) + ' KG</span></div>' +
       '<div class="r tot"><span>Weight variance</span><span class="v kg ' + (a - e < 0 ? 'warn' : '') + '">' +
@@ -2022,7 +2039,7 @@
       var k = num(e.target.closest('.ln').getAttribute('data-k'));
       var l = chLines.filter(function (x) { return x._k === k; })[0];
       if (l) { l[f] = e.target.value; markDirty(); }
-      if (f !== 'variance_reason') drawChLines(false);
+      updateChTotals();
     });
     $('chLines').addEventListener('change', function (e) {
       if (e.target.getAttribute('data-f') !== 'variance_reason') return;
