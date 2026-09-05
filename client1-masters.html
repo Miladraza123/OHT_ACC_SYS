@@ -1662,6 +1662,7 @@
 
   /* ══════════ party ka khata ══════════ */
   var led = { loaded:false, loading:false, vouchers:[], lines:[], sheets:[], adjustments:[], returns:[],
+              services:[],
               lockDate:null, snapshotActive:false, openingBalances:{}, forcedFull:false,
               warehouses:[], transfers:[], transferLines:[] };
   var edView = 'details';
@@ -1670,7 +1671,7 @@
      bas final total chahiye (sorting ki zaroorat nahi kyunke jama-tafriq ka
      order se koi farq nahi padta). Aakhri transaction ki tareekh bhi wapas
      karta hai (Aging Report ke sahi bucket ke liye zaroori hai). */
-  function accountBalanceAsOf(p, allVouchers, allSheets, cutoff, allReturns) {
+  function accountBalanceAsOf(p, allVouchers, allSheets, cutoff, allReturns, allServices) {
     var run = (p.opening_side === 'dr' ? 1 : -1) * n(p.opening);
     var lastDate = '';
     allVouchers.filter(function (v) {
@@ -1697,6 +1698,17 @@
       run = r2(run - n(rr.grand_total));
       if (rr.rdate > lastDate) lastDate = rr.rdate;
     });
+    /* Service Invoice (Cutting/Processing ka bill) bhi usi party ledger mein
+       aata hai — sale ki tarah: balance barhta hai, aur jo paisa mila us se
+       ghatta hai. Trial Balance yeh pehle se ginta tha; ledger nahi ginta
+       tha, is liye dono mein farq aa jata tha. */
+    (allServices || []).filter(function (si) {
+      return String(si.party_id) === String(p.id) && si.sidate && si.sidate < cutoff;
+    }).forEach(function (si) {
+      run = r2(run + n(si.grand_total));
+      if (n(si.paid)) run = r2(run - n(si.paid));
+      if (si.sidate > lastDate) lastDate = si.sidate;
+    });
     return { balance:run, lastDate:lastDate };
   }
 
@@ -1709,15 +1721,17 @@
     return Promise.all([
       sb.from('vouchers').select('party_id,vdate,vtype,grand_total,paid').is('deleted_at', null),
       sb.from('sheets').select('sheet_date,rows'),
-      sb.from('sales_returns').select('party_id,rdate,grand_total').is('deleted_at', null)
+      sb.from('sales_returns').select('party_id,rdate,grand_total').is('deleted_at', null),
+      sb.from('service_invoices').select('party_id,sidate,grand_total,paid').is('deleted_at', null).neq('status', 'cancelled')
     ]).then(function (r) {
       if (r[0].error) throw r[0].error;
       if (r[1].error) throw r[1].error;
       var allVouchers = r[0].data || [];
       var allSheets   = r[1].data || [];
       var allReturns  = r[2].error ? [] : (r[2].data || []);   // SQL na chali ho to bhi bilkul purana tareeqa chale
+      var allServices = r[3].error ? [] : (r[3].data || []);
       var rows = db.parties.map(function (p) {
-        var calc = accountBalanceAsOf(p, allVouchers, allSheets, lockDateValue, allReturns);
+        var calc = accountBalanceAsOf(p, allVouchers, allSheets, lockDateValue, allReturns, allServices);
         return { party_id:p.id, as_of_date:lockDateValue, balance:calc.balance,
                  last_txn_date:calc.lastDate || null };
       });
@@ -1754,22 +1768,28 @@
         var voucherQuery = sb.from('vouchers').select('*').is('deleted_at', null);
         var sheetQuery   = sb.from('sheets').select('sheet_date,rows');
         var returnQuery  = sb.from('sales_returns').select('*').is('deleted_at', null);
+        // Service Invoice bhi usi party ledger ka hissa hai
+        var serviceQuery = sb.from('service_invoices').select('*')
+                             .is('deleted_at', null).neq('status', 'cancelled');
         if (snapshotActive) {
           voucherQuery = voucherQuery.gte('vdate', lockDate);
           sheetQuery   = sheetQuery.gte('sheet_date', lockDate);
           returnQuery  = returnQuery.gte('rdate', lockDate);
+          serviceQuery = serviceQuery.gte('sidate', lockDate);
         }
 
         return Promise.all([
           voucherQuery,
           sheetQuery,
           sb.from('stock_adjustments').select('*'),
-          returnQuery
+          returnQuery,
+          serviceQuery
         ]).then(function (r) {
           r.slice(0, 2).forEach(function (x) { if (x.error) throw x.error; });
           var vouchers = r[0].data || [];
           var sheets   = r[1].data || [];
           var srets    = r[3].error ? [] : (r[3].data || []);
+          var svcs     = r[4].error ? [] : (r[4].data || []);
 
           var lineQuery, retLineQuery;
           if (snapshotActive) {
@@ -1801,6 +1821,7 @@
             led.sheets          = sheets;
             led.adjustments     = r[2].error ? [] : (r[2].data || []);   // SQL na chali ho to bhi chale
             led.returns         = srets;
+            led.services        = svcs;
             led.warehouses      = rr2[2].error ? [] : (rr2[2].data || []);
             led.transfers       = rr2[3].error ? [] : (rr2[3].data || []);
             led.transferLines   = rr2[4].error ? [] : (rr2[4].data || []);
@@ -1841,13 +1862,15 @@
       sb.from('vouchers').select('*').is('deleted_at', null),
       sb.from('voucher_lines').select('*'),
       sb.from('sheets').select('sheet_date,rows'),
-      sb.from('sales_returns').select('*').is('deleted_at', null)
+      sb.from('sales_returns').select('*').is('deleted_at', null),
+      sb.from('service_invoices').select('*').is('deleted_at', null).neq('status', 'cancelled')
     ]).then(function (r) {
       r.slice(0, 3).forEach(function (x) { if (x.error) throw x.error; });
       led.vouchers       = r[0].data || [];
       led.lines          = r[1].data || [];
       led.sheets         = r[2].data || [];
       led.returns        = r[3].error ? [] : (r[3].data || []);
+      led.services       = r[4].error ? [] : (r[4].data || []);
       led.snapshotActive = false;   // is se buildAccount() party ka manual "opening" field use karega, snapshot nahi
       led.forcedFull     = true;    // ab dobara "Load full history" note na dikhaayein
       redrawLedger();
@@ -2199,6 +2222,18 @@
                   sub:'Against Sale ' + (origSale ? (origSale.vno || '') : '') +
                       (cnt ? ' \u00B7 ' + cnt + (cnt === 1 ? ' item' : ' items') : ''),
                   delta:-n(rr.grand_total) });
+      });
+
+    /* Service Invoice — Cutting/Processing ka bill. Sale ki tarah party ka
+       balance barhata hai, aur jo paisa saath mila us se ghatta hai. */
+    (led.services || []).filter(function (si) { return String(si.party_id) === String(p.id); })
+      .forEach(function (si) {
+        ev.push({ kind:'service', date:si.sidate, id:si.id,
+                  label:'Service Invoice ' + (si.sino || ''),
+                  sub:si.narration || 'Processing charges',
+                  delta:n(si.grand_total) });
+        if (n(si.paid)) ev.push({ kind:'servicepaid', date:si.sidate, id:si.id,
+                  label:'Received with invoice', sub:si.sino || '', delta:-n(si.paid) });
       });
 
     led.sheets.forEach(function (s) {
