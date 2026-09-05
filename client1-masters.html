@@ -1180,11 +1180,27 @@
       syncNote('Clock error', '#E89A9A'); return;
     }
     if (e && String(e.code) === '23505') { toast('That name already exists', true); return; }
-    if (e && String(e.code) === '23503' && what === 'delete') {
-      var label = tab === 'parties' ? 'This party has bills or ledger entries'
-                : tab === 'items'   ? 'This item is used on a bill'
-                : 'This firm is used on a bill';
-      toast(label + ' — turn off "In use" instead.', true);
+    if (e && String(e.code) === '23503') {
+      /* Database ka khushk paighaam aam user ke kaam ka nahi. Us mein se
+         table ka naam nikaal kar saaf batao ke kya cheez rok rahi hai. */
+      var USED = { service_invoices:'Service Invoices', vouchers:'bills',
+                   voucher_lines:'bills', quotations:'quotations',
+                   purchase_orders:'purchase orders', sales_returns:'sales returns',
+                   coils:'coils', cutting_jobs:'cutting jobs',
+                   material_inwards:'material inwards', delivery_challans:'delivery challans',
+                   material_returns:'material returns', stock_transfers:'stock transfers',
+                   stock_adjustments:'stock adjustments', sheets:'ledger entries',
+                   stock_conversion_inputs:'stock conversions',
+                   stock_conversion_outputs:'stock conversions' };
+      var fkmsg = (e.message || ''), used = null;
+      Object.keys(USED).forEach(function (t) {
+        if (!used && fkmsg.indexOf('on table "' + t + '"') > -1) used = USED[t];
+      });
+      if (!used) {
+        used = tab === 'parties' ? 'bills ya ledger entries' : 'bills';
+      }
+      toast('Delete nahi ho sakta \u2014 is par ' + used + ' bane hue hain. ' +
+            'Pehle wo hatayein, ya isay Recycle Bin mein hi rehne dein.', true);
       return;
     }
     if (e && (String(e.code) === '23514' || String(e.code) === '23502')) {
@@ -3037,15 +3053,18 @@
     }
 
     syncNote('Saving…');
-    /* is_default smart-merge se bahar rakha jata hai. Yeh ek aisa switch hai
-       jismein sirf ek record "on" ho sakta hai — kisi ek ko default banate hi
-       system baqi sab ka band kar deta hai, seedha database mein. Merge usay
-       "kisi aur ne badla" samajh kar conflict de deta tha. User ne jo chuna,
-       wohi aakhri hai — is liye alag se, seedha likha jata hai. */
+    /* is_default aur logo smart-merge se bahar rakhe jate hain.
+       Merge un fields ke liye hai jinhein do log alag alag badal sakte hain
+       (naam, pata, phone) — wahan dono ki tabdeeliyan mila deni chahiye.
+       Magar logo aur "default firm" aise faisle hain jinka koi beech ka
+       raasta nahi: do logo aapas mein mil nahi sakte, aur default sirf ek
+       hi firm ho sakti hai. Merge inhein "kisi aur ne badla" samajh kar
+       conflict de deta tha. Yahan user ka aakhri faisla hi durust hai. */
     var mergeBody = body;
     if (tab === 'companies') {
       mergeBody = Object.assign({}, body);
       delete mergeBody.is_default;
+      delete mergeBody.logo;
     }
     var q = isNew
       ? sb.from(tab).insert(Object.assign({ id:recId }, body)).select()
@@ -3075,10 +3094,10 @@
       cacheSave(tab, db[tab]);
       // merge se bahar rakha gaya switch ab seedha likh do
       if (tab === 'companies' && !isNew) {
-        sb.from('companies').update({ is_default:!!body.is_default }).eq('id', recId)
-          .then(function () {});
+        var direct = { is_default:!!body.is_default, logo:body.logo || '' };
+        sb.from('companies').update(direct).eq('id', recId).then(function () {});
         db[tab] = db[tab].map(function (r) {
-          return r.id === recId ? Object.assign({}, r, { is_default:!!body.is_default }) : r;
+          return r.id === recId ? Object.assign({}, r, direct) : r;
         });
       }
       if (tab === 'companies' && body.is_default) {
