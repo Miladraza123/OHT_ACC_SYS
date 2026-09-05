@@ -863,25 +863,25 @@
     var jobs_ = can('cutting_job_view') || me.isAdmin;
     var q = [];
     q.push(can('cutting_inward_view') || can('cutting_stock_view')
-      ? sb.from('material_inwards').select('*').is('deleted_at', null).order('idate', { ascending:false }).limit(300)
+      ? sb.from('material_inwards').select('*').is('deleted_at', null).order('idate', { ascending:false }).order('created_at', { ascending:false }).limit(300)
       : Promise.resolve({ data:[] }));
     q.push(can('cutting_stock_view') || can('cutting_inward_view')
       ? sb.from('coils').select('*').is('deleted_at', null).eq('ownership', 'party').order('received_date', { ascending:false }).limit(500)
       : Promise.resolve({ data:[] }));
     q.push(jobs_
-      ? sb.from('cutting_jobs').select('*').is('deleted_at', null).order('jdate', { ascending:false }).limit(300)
+      ? sb.from('cutting_jobs').select('*').is('deleted_at', null).order('jdate', { ascending:false }).order('created_at', { ascending:false }).limit(300)
       : Promise.resolve({ data:[] }));
     q.push(can('cutting_challan_view')
-      ? sb.from('delivery_challans').select('*').is('deleted_at', null).order('ddate', { ascending:false }).limit(300)
+      ? sb.from('delivery_challans').select('*').is('deleted_at', null).order('ddate', { ascending:false }).order('created_at', { ascending:false }).limit(300)
       : Promise.resolve({ data:[] }));
     q.push(can('cutting_return_view') || can('cutting_stock_view')
-      ? sb.from('material_returns').select('*').is('deleted_at', null).order('rdate', { ascending:false }).limit(200)
+      ? sb.from('material_returns').select('*').is('deleted_at', null).order('rdate', { ascending:false }).order('created_at', { ascending:false }).limit(200)
       : Promise.resolve({ data:[] }));
     q.push(can('service_invoice_view') || can('reports_view')
-      ? sb.from('service_invoices').select('*').is('deleted_at', null).order('sidate', { ascending:false }).limit(300)
+      ? sb.from('service_invoices').select('*').is('deleted_at', null).order('sidate', { ascending:false }).order('created_at', { ascending:false }).limit(300)
       : Promise.resolve({ data:[] }));
     q.push(can('own_conversion_view') || can('reports_view')
-      ? sb.from('stock_conversions').select('*').is('deleted_at', null).order('cdate', { ascending:false }).limit(200)
+      ? sb.from('stock_conversions').select('*').is('deleted_at', null).order('cdate', { ascending:false }).order('created_at', { ascending:false }).limit(200)
       : Promise.resolve({ data:[] }));
     q.push(can('cutting_stock_view') || can('reports_view')
       ? sb.from('coils').select('*').is('deleted_at', null).eq('ownership', 'own').order('received_date', { ascending:false }).limit(300)
@@ -1071,13 +1071,15 @@
   /* ---------- Material Inward list ---------- */
   function drawInwards(el) {
     var rows = inwards.filter(function (d) {
-      return hitsQuery((d.ino || '') + ' ' + nameOf(parties, d.party_id) + ' ' + (d.vehicle_no || ''));
+      return docPass('inwards', d) &&
+        hitsQuery((d.ino || '') + ' ' + nameOf(parties, d.party_id) + ' ' + (d.vehicle_no || ''));
     });
     if (!rows.length) {
-      el.innerHTML = emptyBox('Koi inward nahi', 'Party ka maal aaye to yahan Inward banayein. Har coil ko apna serial milta hai.');
+      el.innerHTML = docSeg('inwards') + emptyBox('Koi inward nahi', 'Party ka maal aaye to yahan Inward banayein. Har coil ko apna serial milta hai.');
+      wireDocSeg(el, 'inwards');
       return;
     }
-    el.innerHTML = '<div class="rows">' + rows.map(function (d) {
+    el.innerHTML = docSeg('inwards') + '<div class="rows">' + rows.map(function (d) {
       var cs = coils.filter(function (c) { return c.inward_id === d.id; });
       var wt = cs.reduce(function (t, c) { return t + num(c.received_weight); }, 0);
       return '<div class="brow" data-open="' + esc(d.id) + '" tabindex="0">' +
@@ -1089,6 +1091,7 @@
         (d.status === 'cancelled' ? ' \u00b7 <span class="pill cancelled">Cancelled</span>' : '') + '</div></div>' +
         '<div class="amt"><span class="kg">' + kg(wt) + '</span><span class="tag">KG</span></div></div>';
     }).join('') + '</div>';
+    wireDocSeg(el, 'inwards');
     wireOpen(el, openInward);
   }
 
@@ -1146,6 +1149,35 @@
     wireOpen(el, openCoil);
   }
   var coilFilter = 'active';
+  /* Cancelled document delete nahi hota — record mein rehta hai (audit ke
+     liye). Magar rozana ki list mein us ka ghul-mil kar rehna theek nahi,
+     is liye har document list par Active / Cancelled / Sab ka filter hai.
+     Recycle Bin sirf DELETE kiye hue records ke liye hai, cancelled ke liye
+     nahi — dono alag cheezein hain. */
+  var docFilter = { inwards:'active', challans:'active', returns:'active', invoices:'active' };
+
+  function docSeg(kind) {
+    var segs = [['active','Active'],['cancelled','Cancelled'],['all','Sab']];
+    return '<div class="seg" data-seg="' + kind + '">' + segs.map(function (x) {
+      return '<button data-df="' + x[0] + '"' +
+             (docFilter[kind] === x[0] ? ' class="on"' : '') + '>' + x[1] + '</button>';
+    }).join('') + '</div>';
+  }
+  function docPass(kind, d) {
+    var f = docFilter[kind];
+    if (f === 'active') return d.status !== 'cancelled';
+    if (f === 'cancelled') return d.status === 'cancelled';
+    return true;
+  }
+  function wireDocSeg(el, kind) {
+    var seg = el.querySelector('[data-seg="' + kind + '"]');
+    if (!seg) return;
+    seg.querySelectorAll('button').forEach(function (b) {
+      b.addEventListener('click', function () {
+        docFilter[kind] = b.getAttribute('data-df'); render();
+      });
+    });
+  }
 
   /* ---------- Cutting Jobs ---------- */
   function drawJobs(el) {
@@ -1208,13 +1240,15 @@
   /* ---------- Delivery Challans ---------- */
   function drawChallans(el) {
     var rows = challans.filter(function (d) {
-      return hitsQuery((d.dno || '') + ' ' + nameOf(parties, d.party_id) + ' ' + (d.vehicle_no || ''));
+      return docPass('challans', d) &&
+        hitsQuery((d.dno || '') + ' ' + nameOf(parties, d.party_id) + ' ' + (d.vehicle_no || ''));
     });
     if (!rows.length) {
-      el.innerHTML = emptyBox('Koi challan nahi', 'Kata hua maal party ko bhejte waqt Delivery Challan banayein.');
+      el.innerHTML = docSeg('challans') + emptyBox('Koi challan nahi', 'Kata hua maal party ko bhejte waqt Delivery Challan banayein.');
+      wireDocSeg(el, 'challans');
       return;
     }
-    el.innerHTML = '<div class="rows">' + rows.map(function (d) {
+    el.innerHTML = docSeg('challans') + '<div class="rows">' + rows.map(function (d) {
       return '<div class="brow" data-open="' + esc(d.id) + '" tabindex="0">' +
         '<div class="no">' + esc(d.dno || '\u2014') + '</div>' +
         '<div class="docav doc-sale"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="3" width="16" height="18" rx="1"/><path d="M8 9h8M8 13h5"/></svg></div>' +
@@ -1224,6 +1258,7 @@
         (d.status === 'cancelled' ? ' \u00b7 <span class="pill cancelled">Cancelled</span>' : '') + '</div></div>' +
         '<div class="amt"><span class="kg" id="chw-' + esc(d.id) + '">\u2014</span><span class="tag">DELIVERED</span></div></div>';
     }).join('') + '</div>';
+    wireDocSeg(el, 'challans');
     wireOpen(el, openChallan);
     fillChallanWeights(rows);
   }
@@ -1247,13 +1282,15 @@
   /* ---------- Material Returns ---------- */
   function drawReturns(el) {
     var rows = returns.filter(function (d) {
-      return hitsQuery((d.rno || '') + ' ' + nameOf(parties, d.party_id));
+      return docPass('returns', d) &&
+        hitsQuery((d.rno || '') + ' ' + nameOf(parties, d.party_id));
     });
     if (!rows.length) {
-      el.innerHTML = emptyBox('Koi return nahi', 'Bina kata hua raw maal wapas karna ho to Material Return banayein.');
+      el.innerHTML = docSeg('returns') + emptyBox('Koi return nahi', 'Bina kata hua raw maal wapas karna ho to Material Return banayein.');
+      wireDocSeg(el, 'returns');
       return;
     }
-    el.innerHTML = '<div class="rows">' + rows.map(function (d) {
+    el.innerHTML = docSeg('returns') + '<div class="rows">' + rows.map(function (d) {
       return '<div class="brow" data-open="' + esc(d.id) + '" tabindex="0">' +
         '<div class="no">' + esc(d.rno || '\u2014') + '</div>' +
         '<div class="docav doc-return"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 15l-4-4 4-4"/><path d="M5 11h9a5 5 0 015 5v1"/></svg></div>' +
@@ -1262,19 +1299,22 @@
         (d.status === 'cancelled' ? ' \u00b7 <span class="pill cancelled">Cancelled</span>' : '') + '</div></div>' +
         '<div class="amt"></div></div>';
     }).join('') + '</div>';
+    wireDocSeg(el, 'returns');
     wireOpen(el, openReturn);
   }
 
   /* ---------- Service Invoices ---------- */
   function drawInvoices(el) {
     var rows = invoices.filter(function (d) {
-      return hitsQuery((d.sino || '') + ' ' + nameOf(parties, d.party_id));
+      return docPass('invoices', d) &&
+        hitsQuery((d.sino || '') + ' ' + nameOf(parties, d.party_id));
     });
     if (!rows.length) {
-      el.innerHTML = emptyBox('Koi invoice nahi', 'Processing charges ka bill yahan banta hai. Ek ya kai jobs mila kar bill kar sakte hain.');
+      el.innerHTML = docSeg('invoices') + emptyBox('Koi invoice nahi', 'Processing charges ka bill yahan banta hai. Ek ya kai jobs mila kar bill kar sakte hain.');
+      wireDocSeg(el, 'invoices');
       return;
     }
-    el.innerHTML = '<div class="rows">' + rows.map(function (d) {
+    el.innerHTML = docSeg('invoices') + '<div class="rows">' + rows.map(function (d) {
       var due = num(d.grand_total) - num(d.paid);
       return '<div class="brow" data-open="' + esc(d.id) + '" tabindex="0">' +
         '<div class="no">' + esc(d.sino || '\u2014') + '</div>' +
@@ -1285,6 +1325,7 @@
         '<div class="amt ' + (due > 0 ? 'due' : 'clr') + '">' + money(d.grand_total) +
         '<span class="tag">' + (due > 0 ? 'DUE ' + money(due) : 'PAID') + '</span></div></div>';
     }).join('') + '</div>';
+    wireDocSeg(el, 'invoices');
     wireOpen(el, openInvoice);
   }
 
