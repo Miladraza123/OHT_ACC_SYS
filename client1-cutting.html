@@ -571,12 +571,12 @@
     <h4 id="ccTitle">Coil khatam ho gayi?</h4>
     <p id="ccBody"></p>
     <div class="f"><label>Wajah</label><select id="ccReason">
-      <option value="weighbridge">Weighbridge ka farq</option>
-      <option value="scale">Scale ka farq</option>
-      <option value="handling">Handling mein kami</option>
-      <option value="leftover">Chhota tukra bacha</option>
-      <option value="scrap">Confirmed scrap</option>
-      <option value="other">Koi aur</option>
+      <option value="weight">Weight / scale variance</option>
+      <option value="handling">Handling loss</option>
+      <option value="scrap">Scrap / wastage</option>
+      <option value="coil">Coil weight discrepancy</option>
+      <option value="manual">Manual adjustment</option>
+      <option value="other">Other</option>
     </select></div>
     <div class="f"><label>Remarks</label><textarea id="ccRemarks" placeholder="Kya hua, mukhtasar likh dein"></textarea></div>
     <div class="acts">
@@ -1407,6 +1407,19 @@
   });
   function markDirty() { dirty = true; }
 
+  /* Document do qadam mein banta hai: pehle header, phir uski lines. Agar
+     lines banate waqt koi rok lag jaye (jaise weight ki hadd), to header
+     pehle hi ban chuka hota tha aur wahin reh jata tha — khali document.
+     Ab aisi surat mein naya header hata diya jata hai, taake adhoore
+     documents na banein. Purane document ko haath nahi lagate. */
+  function withRollback(table, headerId, isNew, work) {
+    return Promise.resolve().then(work).catch(function (e) {
+      if (!isNew) throw e;
+      return sb.from(table).delete().eq('id', headerId)
+        .then(function () { throw e; }, function () { throw e; });
+    });
+  }
+
   function opts(list, cur, blank) {
     return (blank ? '<option value="">' + esc(blank) + '</option>' : '') +
       list.map(function (o) {
@@ -1558,6 +1571,7 @@
     return step.then(function (r) {
       if (r.error) throw r.error;
       var inw = r.data;
+      var isFresh = !doc;
       var news = good.filter(function (l) { return !l.id; }).map(function (l) {
         return { inward_id:inw.id, ownership:'party', party_id:party, warehouse_id:wh,
                  received_date:head.idate,
@@ -1576,9 +1590,11 @@
       });
       var jobsAll = ups.slice();
       if (news.length) jobsAll.push(sb.from('coils').insert(news));
-      return Promise.all(jobsAll).then(function (rs) {
-        for (var i = 0; i < rs.length; i++) if (rs[i] && rs[i].error) throw rs[i].error;
-        toast(doc ? 'Inward update ho gaya' : 'Inward ban gaya \u2014 ' + news.length + ' coil serial bane');
+      return withRollback('material_inwards', inw.id, isFresh, function () {
+        return Promise.all(jobsAll).then(function (rs) {
+          for (var i = 0; i < rs.length; i++) if (rs[i] && rs[i].error) throw rs[i].error;
+          toast(doc ? 'Inward update ho gaya' : 'Inward ban gaya \u2014 ' + news.length + ' coil serial bane');
+        });
       });
     });
   }
@@ -1877,6 +1893,7 @@
       if (r.error) throw r.error;
       var job = r.data;
       // Outputs pehle hatao (warna input hatane par output ka coil check fail hoga)
+      return withRollback('cutting_jobs', job.id, !doc, function () {
       return sb.from('cutting_job_outputs').delete().eq('job_id', job.id).then(function () {
         return sb.from('cutting_job_inputs').delete().eq('job_id', job.id);
       }).then(function () {
@@ -1897,6 +1914,7 @@
       }).then(function (r3) {
         if (r3 && r3.error) throw r3.error;
         toast(doc ? 'Job update ho gaya' : 'Job ban gaya');
+      });
       });
     });
   }
@@ -1991,8 +2009,9 @@
           (v > 0 ? '+' : '') + kg(v) + ' KG</span> \u2014 wajah</label>' +
           '<select data-f="variance_reason"' + dis + '>' +
             '<option value="">\u2014 Abhi tay nahi \u2014</option>' +
-            ['weighbridge|Weighbridge ka farq','scale|Scale ka farq','handling|Handling mein kami',
-             'leftover|Chhota tukra','scrap|Confirmed scrap','other|Koi aur'].map(function (o) {
+            ['weight|Weight / scale variance','handling|Handling loss',
+             'scrap|Scrap / wastage','coil|Coil weight discrepancy',
+             'manual|Manual adjustment','other|Other'].map(function (o) {
               var p = o.split('|');
               return '<option value="' + p[0] + '"' + (l.variance_reason === p[0] ? ' selected' : '') + '>' + p[1] + '</option>';
             }).join('') + '</select>' +
@@ -2025,7 +2044,35 @@
       '<div class="r"><span>Expected</span><span class="v kg">' + kg(e) + ' KG</span></div>' +
       '<div class="r"><span>Actual delivery</span><span class="v kg">' + kg(a) + ' KG</span></div>' +
       '<div class="r tot"><span>Weight variance</span><span class="v kg ' + (a - e < 0 ? 'warn' : '') + '">' +
-        (a - e > 0 ? '+' : '') + kg(a - e) + ' KG</span></div></div>';
+        (a - e > 0 ? '+' : '') + kg(a - e) + ' KG</span></div></div>' +
+      bigVarianceNote(e, a);
+  }
+
+  /* Weighbridge ka chhota farq rozana ki baat hai — us par kuch nahi kehte.
+     Magar bara farq ghalti ka nishan ho sakta hai, is liye batate hain.
+     Rokte nahi — weight slip par jo tola gaya, wohi sach hai. */
+  function varianceLimitPct() {
+    var v = num(settings && settings.delivery_variance_pct);
+    return v > 0 ? v : 1;
+  }
+  function varianceMinKg() {
+    var v = num(settings && settings.delivery_variance_min_kg);
+    return v > 0 ? v : 25;
+  }
+  function bigVarianceNote(expected, actual) {
+    var over = num(actual) - num(expected);
+    if (over <= 0 || !num(expected)) return '';
+    var pct = over / num(expected) * 100;
+    /* Warning tab jab farq DONO haddon se barhe \u2014 faisad bhi aur KG bhi.
+       Sirf faisad kaafi nahi: 500 KG ki line par 6 KG ka farq 1.2% ban
+       jata hai, halanke 6 KG rozana ki baat hai. */
+    if (over <= varianceMinKg() || pct <= varianceLimitPct()) return '';
+    return '<div class="vbox" style="border-color:var(--debit)">' +
+      '<div class="r"><span class="warn"><b>Dhyan dein</b></span>' +
+      '<span class="v kg warn">+' + kg(over) + ' KG (' + pct.toFixed(2) + '%)</span></div>' +
+      '<div class="hint">Delivery ka weight cutting job ke record se ' + kg(over) + ' KG zyada hai. ' +
+      'Cutting job ka weight ya weighbridge slip ek dafa dekh lein. ' +
+      'Save phir bhi ho jayega \u2014 wajah zaroor likh dein.</div></div>';
   }
   function wireChallan(ro) {
     drawChLines(ro);
@@ -2097,6 +2144,7 @@
     return step.then(function (r) {
       if (r.error) throw r.error;
       var ch = r.data;
+      return withRollback('delivery_challans', ch.id, !doc, function () {
       return sb.from('delivery_challan_lines').delete().eq('challan_id', ch.id).then(function () {
         return sb.from('delivery_challan_lines').insert(good.map(function (l, i) {
           return { challan_id:ch.id, coil_id:l.coil_id, job_id:l.job_id || null,
@@ -2109,6 +2157,7 @@
         toast(doc ? 'Challan update ho gaya' : 'Challan ban gaya');
         // Maal ja chuka — ab dekho kis coil par thora sa bacha reh gaya
         return checkLowCoils(good.map(function (l) { return l.coil_id; }));
+      });
       });
     });
   }
@@ -2124,7 +2173,9 @@
     return sb.from('coils').select('*').in('id', uniq).then(function (r) {
       if (r.error) return;
       var low = (r.data || []).filter(function (c) {
-        return c.status === 'active' && num(c.pending_delivery) <= 0 &&
+        // "Tayyar" mein chhota farq (tolai ka) rehne dena theek hai —
+        // rok sirf tab jab waqai kata hua maal para ho
+        return c.status === 'active' && num(c.pending_delivery) <= varianceMinKg() &&
                num(c.physical_balance) > 0 && num(c.physical_balance) <= thr;
       });
       if (low.length) { closeQueue = low; }
@@ -2255,6 +2306,7 @@
     return step.then(function (r) {
       if (r.error) throw r.error;
       var ret = r.data;
+      return withRollback('material_returns', ret.id, !doc, function () {
       return sb.from('material_return_lines').delete().eq('return_id', ret.id).then(function () {
         return sb.from('material_return_lines').insert(good.map(function (l, i) {
           return { return_id:ret.id, coil_id:l.coil_id, return_weight:num(l.return_weight),
@@ -2263,6 +2315,7 @@
       }).then(function (r2) {
         if (r2.error) throw r2.error;
         toast(doc ? 'Return update ho gaya' : 'Return ban gaya');
+      });
       });
     });
   }
@@ -2514,6 +2567,7 @@
     return step.then(function (r) {
       if (r.error) throw r.error;
       var inv = r.data;
+      return withRollback('service_invoices', inv.id, !doc, function () {
       return sb.from('service_invoice_lines').delete().eq('invoice_id', inv.id).then(function () {
         return sb.from('service_invoice_lines').insert(good.map(function (l, i) {
           return { invoice_id:inv.id, service_category_id:l.service_category_id || null,
@@ -2539,6 +2593,7 @@
           }
         });
         toast(doc ? 'Invoice update ho gaya' : 'Service invoice ban gaya');
+      });
       });
     });
   }
@@ -2628,7 +2683,12 @@
       '</div><div class="vbox">' +
       '<div class="r"><span>Bana hua maal</span><span class="v kg">' + kg(c.finished_weight) + '</span></div>' +
       '<div class="r"><span>Delivery ho gayi</span><span class="v kg">\u2212' + kg(c.delivered_weight) + '</span></div>' +
-      '<div class="r tot"><span>Delivery ke liye tayyar</span><span class="v kg">' + kg(c.pending_delivery) + ' KG</span></div>' +
+      '<div class="r tot"><span>Delivery ke liye tayyar</span><span class="v kg' +
+        (num(c.pending_delivery) < 0 ? ' warn' : '') + '">' + kg(c.pending_delivery) + ' KG</span></div>' +
+      (num(c.pending_delivery) < 0
+        ? '<div class="hint">Manfi ka matlab: record se ' + kg(-num(c.pending_delivery)) +
+          ' KG zyada maal nikal chuka hai. Weighbridge ka farq aam baat hai \u2014 coil band ' +
+          'karte waqt yeh closing adjustment mein aa jayega.</div>' : '') +
       '</div>' +
       (low ? '<div class="f" style="margin-top:10px"><div class="hint">Raw balance ' + kg(thr) +
              ' KG se kam hai. Agar coil asal mein khatam ho chuki hai to neeche se tasdeeq karein \u2014 ' +
@@ -2677,7 +2737,7 @@
     $('ccBody').textContent = 'Is coil ka hisaab ke mutabiq ' + kg(raw) + ' KG maal abhi hamare paas hai' +
       (raw > thr ? ' \u2014 yeh threshold (' + kg(thr) + ' KG) se zyada hai.' : '.') +
       ' Kya coil asal mein khatam ho chuki hai? Bacha hua weight closing adjustment ke tor par likha jayega.';
-    $('ccReason').value = raw <= thr ? 'weighbridge' : 'other';
+    $('ccReason').value = raw <= thr ? 'weight' : 'other';
     $('ccRemarks').value = '';
     $('closeCoilModal').classList.add('on');
   }
@@ -3050,6 +3110,7 @@
     return step.then(function (r) {
       if (r.error) throw r.error;
       var cv = r.data;
+      return withRollback('stock_conversions', cv.id, !doc, function () {
       return sb.from('stock_conversion_outputs').delete().eq('conversion_id', cv.id).then(function () {
         return sb.from('stock_conversion_inputs').delete().eq('conversion_id', cv.id);
       }).then(function () {
@@ -3068,6 +3129,7 @@
       }).then(function (r3) {
         if (r3.error) throw r3.error;
         toast(doc ? 'Conversion update ho gayi' : 'Conversion ho gayi \u2014 cost transfer ho chuki hai');
+      });
       });
     });
   }
@@ -3833,8 +3895,23 @@
       '<div class="card"><div class="ttl">Coil closing</div>' +
         '<div class="f num"><label>Coil finish confirmation threshold (KG)</label>' +
           '<input id="stThr" type="number" step="1" value="' + esc(s.coil_finish_threshold_kg == null ? 200 : s.coil_finish_threshold_kg) + '">' +
-          '<div class="hint">Raw balance is se kam ho jaye to system poochta hai ke coil khatam ho gayi. ' +
+          '<div class="hint">Party ka maal is se kam reh jaye to system poochta hai ke coil khatam ho gayi. ' +
           'Khud kabhi band nahi karta \u2014 tasdeeq hamesha user karta hai.</div></div>' +
+      '</div>' +
+      '<div class="card"><div class="ttl">Delivery ka weight</div>' +
+        '<div class="f2">' +
+          '<div class="f num" style="margin-bottom:0"><label>Warning ki hadd (%)</label>' +
+            '<input id="stVar" type="number" step="0.01" value="' +
+            esc(s.delivery_variance_pct == null ? 1 : s.delivery_variance_pct) + '"></div>' +
+          '<div class="f num" style="margin-bottom:0"><label>Kam se kam (KG)</label>' +
+            '<input id="stVarKg" type="number" step="1" value="' +
+            esc(s.delivery_variance_min_kg == null ? 25 : s.delivery_variance_min_kg) + '"></div>' +
+        '</div>' +
+        '<div class="f" style="margin:8px 0 0">' +
+          '<div class="hint">Delivery ka actual weight cutting job ke record se is faisad se zyada ho ' +
+          'to app warning dikhati hai \u2014 magar tab jab DONO haddon se barhe. Rokti nahi: ' +
+          'weight slip par jo tola gaya wohi sach hai. Hard rok sirf tab lagti hai jab coil se ' +
+          'us se zyada maal nikal jaye jitna party ne diya tha.</div></div></div>' +
       '</div>' +
       '<div class="card"><div class="ttl">Document number prefixes</div>' +
         '<div class="f2">' +
@@ -3909,6 +3986,8 @@
     $('stSave').addEventListener('click', function () {
       sb.from('cutting_settings').update({
         coil_finish_threshold_kg:nval('stThr'),
+        delivery_variance_pct:nval('stVar'),
+        delivery_variance_min_kg:nval('stVarKg'),
         inward_prefix:val('stMI') || 'MI', coil_serial_prefix:val('stCoil') || 'CUT',
         job_prefix:val('stCJ') || 'CJ', service_invoice_prefix:val('stSV') || 'SV',
         challan_prefix:val('stDC') || 'DC', return_prefix:val('stMR') || 'MR',
