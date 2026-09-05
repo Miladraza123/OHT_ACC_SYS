@@ -3037,9 +3037,19 @@
     }
 
     syncNote('Saving…');
+    /* is_default smart-merge se bahar rakha jata hai. Yeh ek aisa switch hai
+       jismein sirf ek record "on" ho sakta hai — kisi ek ko default banate hi
+       system baqi sab ka band kar deta hai, seedha database mein. Merge usay
+       "kisi aur ne badla" samajh kar conflict de deta tha. User ne jo chuna,
+       wohi aakhri hai — is liye alag se, seedha likha jata hai. */
+    var mergeBody = body;
+    if (tab === 'companies') {
+      mergeBody = Object.assign({}, body);
+      delete mergeBody.is_default;
+    }
     var q = isNew
       ? sb.from(tab).insert(Object.assign({ id:recId }, body)).select()
-      : sb.rpc('smart_merge_update', { p_table:tab, p_id:recId, p_original:editing, p_new:body });
+      : sb.rpc('smart_merge_update', { p_table:tab, p_id:recId, p_original:editing, p_new:mergeBody });
     q.then(function (res) {
       if (res.error) throw res.error;
       if (isNew) {
@@ -3063,6 +3073,14 @@
       var row = result.row;
       if (row) db[tab] = db[tab].map(function (r) { return r.id === recId ? row : r; });
       cacheSave(tab, db[tab]);
+      // merge se bahar rakha gaya switch ab seedha likh do
+      if (tab === 'companies' && !isNew) {
+        sb.from('companies').update({ is_default:!!body.is_default }).eq('id', recId)
+          .then(function () {});
+        db[tab] = db[tab].map(function (r) {
+          return r.id === recId ? Object.assign({}, r, { is_default:!!body.is_default }) : r;
+        });
+      }
       if (tab === 'companies' && body.is_default) {
         var others = db.companies.filter(function (c) { return c.is_default && c.id !== recId; });
         db.companies = db.companies.map(function (c) {
