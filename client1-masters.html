@@ -3132,7 +3132,18 @@
       }
       var result = res.data;   // smart_merge_update ka jawab: {status, row} ya {status:'conflict', fields, current}
       if (result.status === 'conflict') {
-        toast('"' + label + '" mein "' + result.fields.join(', ') + '" kisi aur ne bhi isi waqt badla \u2014 taaza dekh kar dobara karein', true);
+        /* Database conflict ke saath TAAZA row bhi bhejta hai. Usay editor ka
+           naya baseline bana dete hain, warna dobara Save dabane par wohi
+           purana baseline jata tha aur wohi conflict phir aata tha \u2014
+           hamesha ke liye. Aap ki likhi hui values form mein waise hi rehti
+           hain, sirf "pehle kya tha" wala hisaab taaza ho jata hai. */
+        if (result.current) {
+          editing = JSON.parse(JSON.stringify(result.current));
+          db[tab] = db[tab].map(function (x) { return x.id === recId ? result.current : x; });
+          cacheSave(tab, db[tab]);
+        }
+        toast('"' + label + '" beech mein badal gaya tha (' + result.fields.join(', ') +
+              '). Taaza data le liya hai \u2014 Save dobara dabayein.', true);
         loadAll();
         return;
       }
