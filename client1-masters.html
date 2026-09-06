@@ -400,6 +400,12 @@
   .ag-seg { font-family:'IBM Plex Mono',monospace; color:var(--slate); }
   .ag-seg.warn { color:var(--debit); font-weight:600; }
 
+  .agp { border-bottom:1px solid var(--hair); padding:8px 0; }
+  .agphead { display:flex; align-items:center; justify-content:space-between; gap:10px; cursor:pointer; }
+  .agphead .nm { font-weight:600; }
+  .agphead .amt { font-family:ui-monospace,Menlo,monospace; font-weight:700; }
+  .agpsub { font-size:12px; color:var(--mute); margin-top:2px; }
+
   .lowbar { display:none; align-items:center; gap:8px; width:100%; text-align:left;
             padding:9px 12px; background:#FDF6F6; border:none; border-bottom:1px solid #F0D9D9;
             font-size:12.5px; color:var(--debit); cursor:pointer; }
@@ -550,7 +556,7 @@
       <button class="sb-item" id="recycleBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-8 0l1 12a1 1 0 001 1h6a1 1 0 001-1l1-12"/></svg>Recycle Bin</button>
       <button class="sb-item" id="tbBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M5 8l3-2 3 2-3 5a3 3 0 01-6 0zM16 8l3-2 3 2-3 5a3 3 0 01-6 0zM12 21h-4M12 21h4M12 6v15"/></svg>Trial Balance</button>
       <button class="sb-item" id="lockBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>Period Lock</button>
-      <button class="sb-item" id="agingBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>Aging Report</button>
+      <button class="sb-item" id="agingBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Receivable Aging</button>
       <button class="sb-item" id="plBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M4 19h16M8 15l3-4 3 2.5L18 8"/></svg>Profit &amp; Loss</button>
     </div>
 
@@ -590,7 +596,7 @@
       <div class="seg cr"><div class="k">To pay</div><div class="v" id="totCr">—</div></div>
     </div>
     <div class="agingbar" id="agingbar" style="display:none">
-      <span class="ag-lbl">Receivables age</span>
+      <span class="ag-lbl">Alag se</span>
       <span class="ag-seg" id="ag0"></span>
       <span class="ag-seg" id="ag30"></span>
       <span class="ag-seg" id="ag60"></span>
@@ -839,6 +845,41 @@
   </div>
 </div>
 
+<div class="ask" id="agingModal">
+  <div class="box" style="max-width:96vw;width:840px;max-height:92vh;overflow:auto">
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px">
+      <h4 style="margin:0">Receivable Aging</h4>
+      <button class="btn" id="agingClose" style="flex:none">Close</button>
+    </div>
+    <p style="font-size:12.5px;color:var(--mute);margin:0 0 12px">
+      Har bill ki apni umar. Party ki aakhri transaction se koi farq nahi padta.
+    </p>
+
+    <div class="f2">
+      <div class="f"><label>As of date</label><input id="agAsof" type="date"></div>
+      <div class="f"><label>Dikhaein</label>
+        <select id="agScope">
+          <option value="cust">Customer receivables</option>
+          <option value="supadv">Advance to suppliers</option>
+          <option value="custadv">Customer advances</option>
+          <option value="payable">Payable to suppliers</option>
+        </select></div>
+    </div>
+    <div class="f2">
+      <div class="f"><label>Party</label><select id="agParty"></select></div>
+      <div class="f"><label>Kya dikhaein</label>
+        <select id="agOnly">
+          <option value="all">Sab</option>
+          <option value="due">Sirf overdue</option>
+        </select></div>
+    </div>
+
+    <div id="agCards"></div>
+    <div id="agBody" style="margin-top:12px"></div>
+    <div id="agRecon" style="margin-top:12px"></div>
+  </div>
+</div>
+
 <div class="ask" id="setupModal">
   <div class="box" style="max-width:470px;max-height:88vh;overflow:auto">
     <h4>Company Setup</h4>
@@ -941,17 +982,6 @@
   </div>
 </div>
 
-<div class="ask" id="agingModal">
-  <div class="box" style="max-width:520px">
-    <h4>Aging Report</h4>
-    <p style="margin-bottom:10px">Har party ka pending amount, aur wo kitne din se pending hai — sabse zyada purana upar.</p>
-    <div id="agingFilter" style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap"></div>
-    <div id="agingList" style="max-height:50vh;overflow:auto"></div>
-    <div class="acts">
-      <button class="btn" id="agingClose">Close</button>
-    </div>
-  </div>
-</div>
 
 <div class="ask" id="importModal">
   <div class="box" style="max-width:520px">
@@ -1401,35 +1431,31 @@
     if (tab !== 'parties' || !db.parties.length || !led.loaded) {
       bar.style.display = 'none'; abar.style.display = 'none'; return;
     }
-    var dr = 0, cr = 0;
-    var buckets = { b0:0, b30:0, b60:0, b90:0 };
-    var today = new Date();
+    /* Customer ka receivable aur supplier ka advance ek number mein mila
+       dena gumrah karta hai. Ab teenon alag: customer se kitna aana hai,
+       supplier ko kitna advance diya, aur hum ne kitna dena hai.
+
+       Umar (aging) yahan bilkul nahi ginte — us ke liye alag report hai
+       jo har bill ki apni tareekh dekhti hai. Party ki aakhri transaction
+       se poora balance ek khane mein daal dena ghalat tha. */
+    var dr = 0, cr = 0, supAdv = 0;
     db.parties.forEach(function (p) {
-      var acc = buildAccount(p);
-      var v = acc.balance;
-      // Bank/Expense head ka balance asal cash-position ya kharcha hai — customer/supplier
-      // jaisa "receivable/payable" nahi, is liye To Collect/To Pay mein shamil nahi karte
-      if (p.kind !== 'bank' && p.kind !== 'expense') { if (v > 0) dr += v; else cr += -v; }
-      // Aging sirf Customer receivables ke liye maayne rakhti hai — Bank/Expense
-      // head jaisi parties ka koi "kitne din se bakaya hai" nahi hota, sirf balance hota hai
-      if (v > 0 && p.kind === 'customer') {
-        var lastDate = '';
-        acc.events.forEach(function (e) { if (e.date && e.date > lastDate) lastDate = e.date; });
-        var days = lastDate ? Math.floor((today - new Date(lastDate + 'T00:00:00')) / 86400000) : 9999;
-        var key = days <= 30 ? 'b0' : days <= 60 ? 'b30' : days <= 90 ? 'b60' : 'b90';
-        buckets[key] += v;
+      var v = buildAccount(p).balance;
+      if (p.kind === 'bank' || p.kind === 'expense') return;
+      if (v > 0) {
+        if (p.kind === 'supplier') supAdv += v; else dr += v;
+      } else {
+        cr += -v;
       }
     });
     $('totDr').textContent = dr ? money(dr) : '\u2014';
     $('totCr').textContent = cr ? money(cr) : '\u2014';
     bar.style.display = 'flex';
 
-    if (!dr) { abar.style.display = 'none'; }
+    if (!supAdv) { abar.style.display = 'none'; }
     else {
-      $('ag0').textContent  = '0\u201330d: '  + (buckets.b0  ? money(buckets.b0)  : '\u2014');
-      $('ag30').textContent = '31\u201360d: ' + (buckets.b30 ? money(buckets.b30) : '\u2014');
-      $('ag60').textContent = '61\u201390d: ' + (buckets.b60 ? money(buckets.b60) : '\u2014');
-      $('ag90').textContent = '90d+: '        + (buckets.b90 ? money(buckets.b90) : '\u2014');
+      $('ag0').textContent  = 'Advance to suppliers: ' + money(supAdv);
+      $('ag30').textContent = ''; $('ag60').textContent = ''; $('ag90').textContent = '';
       abar.style.display = 'flex';
     }
   }
@@ -3421,61 +3447,6 @@
   });
   $('lockBtn').addEventListener('click', openLockModal);
 
-  /* ---------- Aging Report — party-wise, buildAccount() ki wahi calc reuse karta hai ---------- */
-  var agingBucket = 'all';
-  function computeAging() {
-    var today = new Date();
-    var rows = [];
-    db.parties.forEach(function (p) {
-      var acc = buildAccount(p);
-      var v = acc.balance;
-      if (v <= 0) return;   // sirf receivable (Dr) — jo humein lena hai
-      var lastDate = '';
-      acc.events.forEach(function (e) { if (e.date && e.date > lastDate) lastDate = e.date; });
-      var days = lastDate ? Math.floor((today - new Date(lastDate + 'T00:00:00')) / 86400000) : null;
-      var bucket = days == null ? 'b0' : days <= 30 ? 'b0' : days <= 60 ? 'b30' : days <= 90 ? 'b60' : 'b90';
-      rows.push({ party: p, amount: v, days: days, bucket: bucket, lastDate: lastDate });
-    });
-    rows.sort(function (a, b) { return (b.days || 0) - (a.days || 0); });
-    return rows;
-  }
-  var BUCKET_LABEL = { all:'All', b0:'0\u201330d', b30:'31\u201360d', b60:'61\u201390d', b90:'90d+' };
-  function openAgingReport() {
-    $('agingModal').classList.add('on');
-    if (!led.loaded) {
-      $('agingList').innerHTML = '<p style="color:var(--mute);font-size:13px">Data load ho rahi hai\u2026</p>';
-      loadLedgerData().then(renderAgingReport).catch(function () {
-        $('agingList').innerHTML = '<p style="color:var(--mute);font-size:13px">Load nahi ho saka \u2014 dobara try karein.</p>';
-      });
-    } else {
-      renderAgingReport();
-    }
-  }
-  function renderAgingReport() {
-    var all = computeAging();
-    var fbar = $('agingFilter');
-    fbar.innerHTML = ['all','b0','b30','b60','b90'].map(function (k) {
-      var n = k === 'all' ? all.length : all.filter(function (r) { return r.bucket === k; }).length;
-      if (k !== 'all' && !n) return '';
-      return '<button class="catchip' + (agingBucket === k ? ' active' : '') + '" data-b="' + k + '">' +
-             BUCKET_LABEL[k] + (k !== 'all' ? ' (' + n + ')' : '') + '</button>';
-    }).join('');
-    fbar.querySelectorAll('.catchip').forEach(function (b) {
-      b.addEventListener('click', function () { agingBucket = b.getAttribute('data-b'); renderAgingReport(); });
-    });
-    var rows = agingBucket === 'all' ? all : all.filter(function (r) { return r.bucket === agingBucket; });
-    var box = $('agingList');
-    if (!rows.length) { box.innerHTML = '<p style="color:var(--mute);font-size:13px">Is bucket mein koi pending amount nahi.</p>'; return; }
-    box.innerHTML = rows.map(function (r) {
-      var dayTxt = r.days == null ? 'no transactions' : r.days + ' din se';
-      var color = r.bucket === 'b90' ? '#9B2C2C' : r.bucket === 'b60' ? '#C9622A' : r.bucket === 'b30' ? '#B08A3E' : 'var(--mute)';
-      return '<div class="catrow"><div><span class="nm">' + esc(r.party.name) + '</span>' +
-             '<span class="cnt" style="color:' + color + '">' + esc(dayTxt) + '</span></div>' +
-             '<span style="font-weight:600;color:#0B6E99">' + fmt(r.amount) + '</span></div>';
-    }).join('');
-  }
-  $('agingClose').addEventListener('click', function () { $('agingModal').classList.remove('on'); });
-  $('agingBtn').addEventListener('click', openAgingReport);
 
   /* ---------- Profit & Loss ---------- */
   var plRangeKey = 'month', plGroupBy = 'invoice';
@@ -3999,6 +3970,173 @@
     var sp = ($('stSale').value || 'S').trim() || 'S';
     $('stEg').textContent = sp + '-0001';
   }
+  /* ---------- Receivable Aging ----------
+     Poora hisaab database mein hota hai (receivable_aging RPC). Yahan sirf
+     dikhana hai. Wajah: aging aur ledger dono ek hi jagah se number lein,
+     warna dono apna apna hisaab lagate hain aur numbers nahi milte. */
+  var agRows = [], agLoading = false, agOpen = {};
+
+  var AG_BUCKETS = [['notdue','Not due'], ['b0','0\u201330 din'], ['b30','31\u201360 din'],
+                    ['b60','61\u201390 din'], ['b90','90+ din'], ['unknown','Age unknown']];
+
+  function openAgingModal() {
+    $('agingModal').classList.add('on');
+    if (!$('agAsof').value) $('agAsof').value = today();
+    agOpen = {};
+    loadAging();
+  }
+  function loadAging() {
+    agLoading = true; drawAging();
+    sb.rpc('receivable_aging', { p_asof: $('agAsof').value || today() }).then(function (r) {
+      agLoading = false;
+      if (r.error) { agRows = []; sayErr(r.error, 'load aging'); drawAging(); return; }
+      agRows = r.data || [];
+      var seen = {};
+      agRows.forEach(function (x) { seen[x.party_id] = x.party_name; });
+      var cur = $('agParty').value;
+      $('agParty').innerHTML = '<option value="">Sab parties</option>' +
+        Object.keys(seen).sort(function (a, b) { return seen[a].localeCompare(seen[b]); })
+          .map(function (id) {
+            return '<option value="' + esc(id) + '"' + (cur === id ? ' selected' : '') + '>' +
+                   esc(seen[id]) + '</option>';
+          }).join('');
+      drawAging();
+    });
+  }
+
+  /* Kaun si rows dikhani hain — scope, party aur overdue ke filter ke baad */
+  function agVisible() {
+    var scope = $('agScope').value, pid = $('agParty').value, only = $('agOnly').value;
+    /* Chaar bilkul alag cheezein, jinhein mila dena gumrah karta hai:
+         cust     — customer se kitna aana hai (yehi asal receivable hai)
+         supadv   — supplier ko jo zyada de diya (debit taraf)
+         custadv  — customer ne jo zyada de diya
+         payable  — supplier ka jo hum ne dena hai (bilkul normal) */
+    var isAdv = function (x) { return x.bucket === 'advance'; };
+    var isPay = function (x) { return x.bucket === 'payable'; };
+    return agRows.filter(function (x) {
+      if (pid && x.party_id !== pid) return false;
+      if (scope === 'cust')        { if (isAdv(x) || isPay(x) || x.party_kind === 'supplier') return false; }
+      else if (scope === 'supadv') { if (isAdv(x) || isPay(x) || x.party_kind !== 'supplier') return false; }
+      else if (scope === 'custadv'){ if (!isAdv(x)) return false; }
+      else                         { if (!isPay(x)) return false; }
+      if (only === 'due' && (x.bucket === 'notdue' || x.bucket === 'unknown')) return false;
+      return true;
+    });
+  }
+
+  function drawAging() {
+    if (agLoading) { $('agCards').innerHTML = '<div class="hint">Load ho raha hai\u2026</div>';
+                     $('agBody').innerHTML = ''; $('agRecon').innerHTML = ''; return; }
+    var rows = agVisible(), scope = $('agScope').value;
+    var total = rows.reduce(function (t, x) { return t + n(x.outstanding); }, 0);
+
+    if (scope !== 'cust') {
+      var TITLE = { supadv:'Advance to suppliers', custadv:'Customer advances',
+                    payable:'Payable to suppliers' };
+      $('agCards').innerHTML = '<div class="sum"><div class="sline big"><span class="k">' +
+        (TITLE[scope] || '') + '</span><span class="v">' + fmt(total) + '</span></div></div>';
+      $('agBody').innerHTML = rows.length
+        ? '<table class="ltab"><thead><tr><th>Party</th><th>Doc</th><th>Date</th>' +
+          '<th style="text-align:right">Amount</th></tr></thead><tbody>' +
+          rows.sort(function (a, b) { return n(b.outstanding) - n(a.outstanding); }).map(function (x) {
+            return '<tr><td>' + esc(x.party_name) + '</td>' +
+                   '<td>' + esc(x.doc_no || '') + '</td>' +
+                   '<td>' + esc(x.doc_date || '\u2014') + '</td>' +
+                   '<td class="r">' + fmt(x.outstanding) + '</td></tr>';
+          }).join('') + '</tbody></table>'
+        : '<div class="hint">Koi record nahi.</div>';
+      $('agRecon').innerHTML = '';
+      return;
+    }
+
+    // khanon ka jama
+    var bk = {}; AG_BUCKETS.forEach(function (b) { bk[b[0]] = 0; });
+    rows.forEach(function (x) { bk[x.bucket] = (bk[x.bucket] || 0) + n(x.outstanding); });
+
+    $('agCards').innerHTML = '<div class="sum">' +
+      '<div class="sline big"><span class="k">Total receivables</span><span class="v">' + fmt(total) + '</span></div>' +
+      AG_BUCKETS.map(function (b) {
+        if (!bk[b[0]]) return '';
+        return '<div class="sline"><span class="k">' + b[1] + '</span><span class="v' +
+               (b[0] === 'b90' ? ' neg' : '') + '">' + fmt(bk[b[0]]) + '</span></div>';
+      }).join('') + '</div>';
+
+    // party-wise, andar bill ki tafseel
+    var byP = {};
+    rows.forEach(function (x) { (byP[x.party_id] = byP[x.party_id] || []).push(x); });
+    var pids = Object.keys(byP).sort(function (a, b) {
+      return byP[b].reduce(function (t, x) { return t + n(x.outstanding); }, 0) -
+             byP[a].reduce(function (t, x) { return t + n(x.outstanding); }, 0);
+    });
+
+    $('agBody').innerHTML = pids.length ? pids.map(function (pid) {
+      var list = byP[pid], nm = list[0].party_name;
+      var t = list.reduce(function (a, x) { return a + n(x.outstanding); }, 0);
+      var pb = {}; list.forEach(function (x) { pb[x.bucket] = (pb[x.bucket] || 0) + n(x.outstanding); });
+      var open = !!agOpen[pid];
+      return '<div class="agp">' +
+        '<div class="agphead" data-agp="' + esc(pid) + '">' +
+          '<span class="nm">' + (open ? '\u25be ' : '\u25b8 ') + esc(nm) + '</span>' +
+          '<span class="amt">' + fmt(t) + '</span></div>' +
+        '<div class="agpsub">' + AG_BUCKETS.filter(function (b) { return pb[b[0]]; })
+          .map(function (b) { return b[1] + ' ' + fmt(pb[b[0]]); }).join('  \u00b7  ') + '</div>' +
+        (open ? '<table class="ltab" style="margin:6px 0 12px"><thead><tr>' +
+          '<th>Doc</th><th>Date</th><th>Due</th><th style="text-align:right">Original</th>' +
+          '<th style="text-align:right">Applied</th><th style="text-align:right">Outstanding</th>' +
+          '<th style="text-align:right">Days</th><th>Bucket</th></tr></thead><tbody>' +
+          list.sort(function (a, b) { return String(a.doc_date || '').localeCompare(String(b.doc_date || '')); })
+            .map(function (x) {
+              var lbl = (AG_BUCKETS.filter(function (b) { return b[0] === x.bucket; })[0] || ['', x.bucket])[1];
+              return '<tr><td>' + esc(x.doc_no || '') + '</td>' +
+                '<td>' + esc(x.doc_date || '\u2014') + '</td>' +
+                '<td>' + esc(x.due_date || '\u2014') + '</td>' +
+                '<td class="r">' + fmt(x.original) + '</td>' +
+                '<td class="r">' + (n(x.applied) ? fmt(x.applied) : '\u2014') + '</td>' +
+                '<td class="r"><b>' + fmt(x.outstanding) + '</b></td>' +
+                '<td class="r">' + (x.days_overdue == null ? '\u2014' : x.days_overdue) + '</td>' +
+                '<td>' + esc(lbl) + '</td></tr>';
+            }).join('') + '</tbody></table>' : '') +
+        '</div>';
+    }).join('') : '<div class="hint">Koi bakaya nahi.</div>';
+
+    $('agBody').querySelectorAll('[data-agp]').forEach(function (el) {
+      el.addEventListener('click', function () {
+        var id = el.getAttribute('data-agp');
+        agOpen[id] = !agOpen[id]; drawAging();
+      });
+    });
+
+    drawAgingRecon();
+  }
+
+  /* Reconciliation: aging ka jama aur party ka asal balance barabar hone
+     chahiyen. Farq ho to chhupate nahi — saaf dikhate hain. */
+  function drawAgingRecon() {
+    sb.rpc('aging_reconcile', { p_asof: $('agAsof').value || today() }).then(function (r) {
+      if (r.error || !$('agRecon')) return;
+      var bad = (r.data || []).filter(function (x) { return Math.abs(n(x.diff)) > 0.01; });
+      $('agRecon').innerHTML = bad.length
+        ? '<div class="sum" style="border-color:var(--debit)"><div class="sline">' +
+          '<span class="k neg"><b>Reconciliation mein farq</b></span></div>' +
+          bad.slice(0, 10).map(function (x) {
+            return '<div class="sline"><span class="k">' + esc(x.party_name) + '</span>' +
+                   '<span class="v neg">' + fmt(x.diff) + '</span></div>';
+          }).join('') +
+          '<div class="hint">Aging aur party ke ledger ka number nahi mil raha. ' +
+          'Yeh chhupaya nahi ja raha \u2014 bata dein, dekh lenge.</div></div>'
+        : '<div class="hint">\u2713 Reconciliation theek: har party ka aging total ' +
+          'us ke ledger balance ke barabar hai.</div>';
+    });
+  }
+
+  $('agingBtn').addEventListener('click', openAgingModal);
+  $('agingClose').addEventListener('click', function () { $('agingModal').classList.remove('on'); });
+  $('agAsof').addEventListener('change', loadAging);
+  ['agScope','agParty','agOnly'].forEach(function (id) {
+    $(id).addEventListener('change', function () { agOpen = {}; drawAging(); });
+  });
+
   $('setupBtn').addEventListener('click', openSetupModal);
   $('setupClose').addEventListener('click', function () { $('setupModal').classList.remove('on'); });
   $('stSale').addEventListener('input', updateSetupEg);
@@ -4807,7 +4945,6 @@
     $('lockBtn').style.display    = can('period_lock')     ? '' : 'none';
     $('bkBtn').style.display      = can('backup_restore')  ? '' : 'none';
     $('recycleBtn').style.display = can('recycle_bin')     ? '' : 'none';
-    $('agingBtn').style.display   = can('reports_view')    ? '' : 'none';
     $('plBtn').style.display      = can('reports_view')    ? '' : 'none';
     $('tbBtn').style.display      = can('reports_view')    ? '' : 'none';
     $('usersBtn').style.display   = (me && me.isAdmin) ? '' : 'none';
@@ -4815,6 +4952,7 @@
     $('wipeBtn').style.display = (me && me.isAdmin) ? '' : 'none';
     $('warehousesBtn').style.display = can('masters_edit') ? '' : 'none';
     $('setupBtn').style.display      = can('masters_edit') ? '' : 'none';
+    $('agingBtn').style.display      = can('reports_view') ? '' : 'none';
     $('importBtn').style.display  = can('masters_import') && (tab === 'parties' || tab === 'items') ? '' : 'none';
   }
   /* ---------- Realtime: 20-second polling ki jagah, sirf jab actual change ho tab refresh ---------- */
