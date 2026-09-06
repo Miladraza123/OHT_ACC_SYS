@@ -332,6 +332,8 @@
   .cbar .raw { background:var(--accent); }
   .cbar .fin { background:var(--cash); }
   .cbar .out { background:var(--credit); }
+  .cbar .back { background:var(--mute); }
+  .cbar .over { background:var(--debit); }
 
   /* size rows (cutting sizes / conversion lines) */
   .unitsw { display:flex; border:1px solid var(--line); border-radius:7px; overflow:hidden; flex:none; }
@@ -628,7 +630,17 @@
   /* Shell batata hai ke yeh app abhi khuli hui hai ya peeche chali gayi.
      Session ka refresh sirf khuli app karti hai. */
   window.addEventListener('message', function (e) {
-    if (e.data && e.data.msg === 'active') setAutoRefresh(!!e.data.on);
+    if (e.data && e.data.msg === 'active') {
+      setAutoRefresh(!!e.data.on);
+      /* Saamne aate hi parties/items/warehouses dobara mangwa lo. Yeh app
+         Masters ka "refresh" paighaam bilkul nahi sunti thi, aur wo paighaam
+         waise bhi sirf pehle se khuli apps ko jata hai. Nayi party bana kar
+         Cutting kholein to wo list mein nazar hi nahi aati thi. */
+      if (e.data.on && sb) loadMasters().then(render).catch(function () {});
+    }
+    if (e.data && e.data.msg === 'refresh' && sb) {
+      loadMasters().then(render).catch(function () {});
+    }
   });
   /* Shell ke baghair (seedha URL se) khuli ho to bhi refresh chalna chahiye */
   if (window.self === window.top) {
@@ -1095,6 +1107,27 @@
     wireOpen(el, openInward);
   }
 
+  /* Coil ki patti: poora received 100% hai, aur us mein chaar hisse —
+     bina kata, tayyar (kata magar gaya nahi), gaya, aur wapas. Manfi
+     hisse chaurai nahi lete. Agar received se zyada maal bahar nikal
+     jaye to aakhir mein laal tukra aata hai. */
+  function coilBar(c) {
+    var rec = num(c.received_weight) || 1;
+    var parts = [
+      ['raw',  num(c.raw_balance)],
+      ['fin',  num(c.pending_delivery)],
+      ['out',  num(c.delivered_weight)],
+      ['back', num(c.returned_weight)]
+    ];
+    var html = parts.map(function (p) {
+      var w = p[1] > 0 ? p[1] / rec * 100 : 0;
+      return w > 0 ? '<i class="' + p[0] + '" style="width:' + w + '%"></i>' : '';
+    }).join('');
+    var gone = num(c.delivered_weight) + num(c.returned_weight) + num(c.closing_adjust_weight);
+    if (gone > rec) html += '<i class="over" style="width:' + ((gone - rec) / rec * 100) + '%"></i>';
+    return '<div class="cbar">' + html + '</div>';
+  }
+
   /* ---------- Party Coil Stock ---------- */
   function drawCoils(el) {
     var thr = num(settings && settings.coil_finish_threshold_kg) || 200;
@@ -1130,9 +1163,7 @@
         '<div class="sub">' +
         [c.material_type, c.grade, mm(c.thickness_mm), mm(c.width_mm)].filter(Boolean).map(esc).join(' \u00b7 ') +
         (c.party_coil_ref ? ' \u00b7 Ref ' + esc(c.party_coil_ref) : '') + '</div>' +
-        '<div class="cbar"><i class="raw" style="width:' + (raw / rec * 100) + '%"></i>' +
-        '<i class="fin" style="width:' + (fin / rec * 100) + '%"></i>' +
-        '<i class="out" style="width:' + (out / rec * 100) + '%"></i></div>' +
+        coilBar(c) +
         '<div class="sub" style="margin-top:5px">Hamare paas <b class="kg">' + kg(phy) + '</b> \u00b7 ' +
         'Bina kata <b class="kg">' + kg(raw) + '</b> \u00b7 Tayyar <b class="kg">' + kg(fin) + '</b>' +
         (num(c.returned_weight) ? ' \u00b7 Wapas <b class="kg">' + kg(c.returned_weight) + '</b>' : '') +

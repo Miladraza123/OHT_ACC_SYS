@@ -705,7 +705,15 @@
   /* Shell batata hai ke yeh app abhi khuli hui hai ya peeche chali gayi.
      Session ka refresh sirf khuli app karti hai. */
   window.addEventListener('message', function (e) {
-    if (e.data && e.data.msg === 'active') setAutoRefresh(!!e.data.on);
+    if (e.data && e.data.msg === 'active') {
+      setAutoRefresh(!!e.data.on);
+      /* Jab bhi yeh app saamne aaye, parties dobara mangwa lo. Pehle sirf
+         Masters ke "refresh" paighaam par bharosa tha, magar wo paighaam
+         sirf un apps ko jata hai jo us waqt PEHLE SE khuli hon. Nayi party
+         banao aur phir Ledger kholo — paighaam kabhi pahuncha hi nahi tha,
+         aur nayi party list mein nazar nahi aati thi. */
+      if (e.data.on) loadParties();
+    }
   });
   /* Shell ke baghair (seedha URL se) khuli ho to bhi refresh chalna chahiye */
   if (window.self === window.top) {

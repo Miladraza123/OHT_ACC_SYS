@@ -472,7 +472,12 @@
   /* Shell batata hai ke yeh app abhi khuli hui hai ya peeche chali gayi.
      Session ka refresh sirf khuli app karti hai. */
   window.addEventListener('message', function (e) {
-    if (e.data && e.data.msg === 'active') setAutoRefresh(!!e.data.on);
+    if (e.data && e.data.msg === 'active') {
+      setAutoRefresh(!!e.data.on);
+      // Masters ka "refresh" paighaam sirf pehle se khuli apps ko jata hai,
+      // is liye saamne aate hi khud bhi taaza kar lete hain
+      if (e.data.on) refreshMasterLists();
+    }
   });
   /* Shell ke baghair (seedha URL se) khuli ho to bhi refresh chalna chahiye */
   if (window.self === window.top) {
@@ -3017,15 +3022,30 @@
     if (e.data.msg === 'refresh') {
       var kind = e.data.kind;
       if (kind !== 'parties' && kind !== 'items' && kind !== 'companies') return;
-      sb.from(kind).select('*').then(function (res) {
-        if (res.error) return;
-        if (kind === 'parties') parties = res.data || [];
-        else if (kind === 'items') items = res.data || [];
-        else firms = res.data || [];
-        if (!bill) render();      // koi bill khula ho to zabardasti dobara nahi banate — picker khud taaza data dekhega
-      }).catch(function () {});
+      refreshMasterLists(kind);
     }
   });
+
+  /* Parties, items aur firms dobara mangwa lo. Do jagah se bulaya jata hai:
+     Masters ke "refresh" paighaam par, aur jab yeh app saamne aaye. Doosri
+     wajah zaroori hai — wo paighaam sirf un apps ko jata hai jo us waqt
+     PEHLE SE khuli hon. Nayi party bana kar Billing kholein to paighaam
+     kabhi pahuncha hi nahi tha. */
+  function refreshMasterLists(kind) {
+    if (!sb) return Promise.resolve();
+    var kinds = kind ? [kind] : ['parties', 'items', 'companies'];
+    return Promise.all(kinds.map(function (k) {
+      return sb.from(k).select('*').then(function (res) {
+        if (res.error) return;
+        if (k === 'parties') parties = res.data || [];
+        else if (k === 'items') items = res.data || [];
+        else firms = res.data || [];
+      }).catch(function () {});
+    })).then(function () {
+      // koi bill khula ho to usay dobara nahi banate — picker khud taaza data dekhega
+      if (!bill) render();
+    });
+  }
 
   /* ---------- Company setup: currency aur print terms ---------- */
   var appSettings = { currency_symbol:'Rs', print_terms:'' };
