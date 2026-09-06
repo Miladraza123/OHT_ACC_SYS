@@ -1811,9 +1811,14 @@
   }
 
   function loadLedgerData() {
-    if (led.loading) return Promise.resolve();   // ek waqt me ek hi request, magar hamesha taaza mangwao
+    /* Ek waqt mein ek hi request. Pehle yahan KHALI jawab de diya jata tha,
+       aur bulane wala foran render() chala deta tha — us waqt led.loaded
+       abhi false hota tha, is liye poori Items list "RATE" par chali jati
+       thi aur phir kabhi dobara render nahi hoti thi. Ab chalta hua kaam hi
+       wapas dete hain, taake bulane wala us ke poora hone ka intezaar kare. */
+    if (led.loading && led.promise) return led.promise;
     led.loading = true;
-    return sb.from('period_lock').select('locked_before').eq('id', 1).single().then(function (lockRes) {
+    led.promise = sb.from('period_lock').select('locked_before').eq('id', 1).single().then(function (lockRes) {
       var lockDate = (!lockRes.error && lockRes.data) ? lockRes.data.locked_before : null;
       return sb.from('party_opening_balances').select('party_id,as_of_date,balance,last_txn_date').then(function (obRes) {
         var obRows = (!obRes.error && obRes.data) ? obRes.data : [];
@@ -1906,7 +1911,7 @@
             led.snapshotActive  = snapshotActive;
             led.openingBalances = openingBalances;
             led.forcedFull      = false;
-            led.loaded = true; led.loading = false;
+            led.loaded = true; led.loading = false; led.promise = null;
 
             // lock set hai lekin snapshot missing/stale mila — background mein
             // khud theek kar lo (is dafa poora/safe data already load ho chuka hai)
@@ -1919,12 +1924,13 @@
         });
       });
     }).catch(function (e) {
-      led.loading = false;
+      led.loading = false; led.promise = null;
       if (isNetErr(e)) toast('No internet — could not load the account', true);
       else if (isClockErr(e)) toast('Your phone\u2019s clock looks slightly off \u2014 try again in a moment', true);
       else { console.error(e); toast('Could not load the account', true); }
       throw e;
     });
+    return led.promise;
   }
 
   /* Statement of Account screen par "Load full history" \u2014 sirf is party ki
