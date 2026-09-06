@@ -1,0 +1,37 @@
+name: Daily Backup
+
+# Roz subah 6 baje Karachi ka waqt (UTC 01:00). GitHub UTC par chalta hai.
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:        # haath se bhi chala sakein
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          # checkout aur setup-node ke v4 khud Node 20 par chalte thay, is liye
+          # warning aati thi. v5 dono Node 24 par chalte hain. (Node 20 ko
+          # runners se 16 September 2026 ko hata diya jayega.)
+          # Node 22 lazmi hai. Supabase ki library shuru hote hi realtime ka
+          # client banati hai (chahe hum use karein ya na karein), aur usay
+          # native WebSocket chahiye — jo Node 20 mein hai hi nahi.
+          node-version: '22'
+
+      - name: Install
+        run: npm install
+
+      - name: Backup banao aur email karo
+        run: node backup.js
+        env:
+          SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY:  ${{ secrets.SUPABASE_ANON_KEY }}
+          BACKUP_EMAIL:       ${{ secrets.BACKUP_EMAIL }}
+          BACKUP_PASSWORD:    ${{ secrets.BACKUP_PASSWORD }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          BACKUP_TO_EMAIL:    ${{ secrets.BACKUP_TO_EMAIL }}

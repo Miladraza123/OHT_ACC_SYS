@@ -323,8 +323,22 @@ async function buildExcel(data) {
   }
   addPlain('Parties', ['Name', 'Type', 'Phone', 'City', 'Opening Amount', 'Opening Side', 'Notes', 'Active'],
     P.map(function (p) { return { Name: p.name, Type: p.kind, Phone: p.phone, City: p.city, 'Opening Amount': Number(p.opening) || 0, 'Opening Side': (p.opening_side === 'dr' ? 'They owe us' : 'We owe them'), Notes: p.notes, Active: p.active === false ? 'No' : 'Yes' }; }));
-  addPlain('Items', ['Name', 'Unit', 'Sale Rate', 'Purchase Rate', 'Tax %', 'Opening Qty', 'Opening Rate', 'Low Stock Alert', 'HS Code', 'Notes', 'Active'],
-    I.map(function (i) { return { Name: i.name, Unit: i.unit, 'Sale Rate': Number(i.sale_rate) || 0, 'Purchase Rate': Number(i.buy_rate) || 0, 'Tax %': Number(i.tax_pct) || 0, 'Opening Qty': Number(i.opening_qty) || 0, 'Opening Rate': Number(i.opening_rate) || 0, 'Low Stock Alert': Number(i.reorder_level) || 0, 'HS Code': i.hs_code, Notes: i.notes, Active: i.active === false ? 'No' : 'Yes' }; }));
+  /* Opening ke saath ABHI ka stock bhi — kyunki asal sawaal yehi hota hai
+     ke aaj kitna maal para hai. stock_qty aur avg_cost costing engine khud
+     rakhta hai: har purchase, sale, return, conversion aur adjustment par. */
+  addPlain('Items',
+    ['Name', 'Unit', 'Stock', 'Avg Cost', 'Stock Value', 'Sale Rate', 'Purchase Rate',
+     'Tax %', 'Opening Qty', 'Opening Rate', 'Low Stock Alert', 'HS Code', 'Notes', 'Active'],
+    I.map(function (i) {
+      var qty = Number(i.stock_qty) || 0, cost = Number(i.avg_cost) || 0;
+      return { Name: i.name, Unit: i.unit,
+               'Stock': qty, 'Avg Cost': cost, 'Stock Value': Math.round(qty * cost * 100) / 100,
+               'Sale Rate': Number(i.sale_rate) || 0, 'Purchase Rate': Number(i.buy_rate) || 0,
+               'Tax %': Number(i.tax_pct) || 0,
+               'Opening Qty': Number(i.opening_qty) || 0, 'Opening Rate': Number(i.opening_rate) || 0,
+               'Low Stock Alert': Number(i.reorder_level) || 0, 'HS Code': i.hs_code,
+               Notes: i.notes, Active: i.active === false ? 'No' : 'Yes' };
+    }));
   addPlain('Firms', ['Name', 'Address', 'City', 'Phone', 'NTN', 'STRN', 'Default', 'Active'],
     C.map(function (c) { return { Name: c.name, Address: c.address, City: c.city, Phone: c.phone, NTN: c.ntn, STRN: c.strn, Default: c.is_default ? 'Yes' : 'No', Active: c.active === false ? 'No' : 'Yes' }; }));
 
