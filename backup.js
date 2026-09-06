@@ -379,7 +379,7 @@ async function buildExcel(data) {
     }));
 
   // Material inward aur raw wapsi
-  addPlain('Material In/Out',
+  addPlain('Material In-Out',
     ['Type', 'Doc', 'Date', 'Party', 'Warehouse', 'Vehicle', 'Weight KG', 'Coils', 'Remarks'],
     MI.map(function (m) {
       var cs = CO.filter(function (c) { return c.inward_id === m.id; });
