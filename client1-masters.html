@@ -403,6 +403,13 @@
   /* Chhoti summary list — baaen taraf naam, dayen taraf number.
      Yeh CSS pehle thi hi nahi, is liye labels aur numbers chipke hue
      dikhte thay ("Stock2,000 kg"). */
+  .urow { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+  .urow input { flex:1; min-width:0; padding:8px 9px; border:1px solid var(--line);
+                border-radius:7px; font-size:14px; }
+  .urow .udef, .urow .urm { flex:none; width:34px; height:34px; border-radius:7px;
+                            border:1px solid var(--hair); background:none; color:var(--mute); }
+  .urow .udef.on { background:var(--ink); color:#fff; border-color:var(--ink); }
+
   .sum { border:1px solid var(--hair); border-radius:9px; padding:9px 11px; background:var(--panel); }
   .sum .sline { display:flex; align-items:baseline; justify-content:space-between; gap:12px;
                 padding:3px 0; font-size:13.5px; }
@@ -568,6 +575,7 @@
       <button class="sb-item" id="recycleBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 011-1h4a1 1 0 011 1v2m-8 0l1 12a1 1 0 001 1h6a1 1 0 001-1l1-12"/></svg>Recycle Bin</button>
       <button class="sb-item" id="tbBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v3M5 8l3-2 3 2-3 5a3 3 0 01-6 0zM16 8l3-2 3 2-3 5a3 3 0 01-6 0zM12 21h-4M12 21h4M12 6v15"/></svg>Trial Balance</button>
       <button class="sb-item" id="lockBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="1.5"/><path d="M8 11V7a4 4 0 018 0v4"/></svg>Period Lock</button>
+      <button class="sb-item" id="restoreBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v5h5"/></svg>Restore from backup</button>
       <button class="sb-item" id="agingBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Receivable Aging</button>
       <button class="sb-item" id="plBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19V5M4 19h16M8 15l3-4 3 2.5L18 8"/></svg>Profit &amp; Loss</button>
     </div>
@@ -857,6 +865,38 @@
   </div>
 </div>
 
+<div class="ask" id="restoreModal">
+  <div class="box" style="max-width:96vw;width:620px;max-height:92vh;overflow:auto">
+    <h4>Restore from backup</h4>
+    <p style="font-size:12.5px;color:var(--mute);margin:0 0 12px">
+      Roz jo email aati hai us mein <b>QTC-Restore-&lt;date&gt;.json</b> file hoti hai. Wohi
+      yahan daalein. Excel wali file se system wapas nahi aata — wo sirf padhne ke liye hai.
+    </p>
+
+    <div class="f"><label>Backup file</label>
+      <input id="rsFile" type="file" accept=".json,application/json"></div>
+
+    <div class="f"><label>Tareeqa</label>
+      <select id="rsMode">
+        <option value="missing">Sirf ghaayab records wapas laao</option>
+        <option value="replace">Poora replace — database bilkul file jaisa ban jaye</option>
+      </select>
+      <div class="hint" id="rsModeHint"></div></div>
+
+    <div id="rsPlan"></div>
+
+    <div class="f" id="rsConfirmBox" style="display:none">
+      <label>Confirm karne ke liye <b>RESTORE</b> likhein</label>
+      <input id="rsConfirm" type="text" placeholder="RESTORE" autocomplete="off"></div>
+
+    <div class="acts">
+      <button class="btn" id="rsClose">Close</button>
+      <button class="btn" id="rsCheck" style="flex:none">Check karein</button>
+      <button class="btn danger" id="rsGo" style="flex:none;display:none">Restore</button>
+    </div>
+  </div>
+</div>
+
 <div class="ask" id="agingModal">
   <div class="box" style="max-width:96vw;width:840px;max-height:92vh;overflow:auto">
     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:4px">
@@ -1097,7 +1137,95 @@
      mein naya logo likh dene se system samajhta tha ke logo badla hi nahi,
      aur purana logo wapas rakh deta tha. null = logo ko haath nahi lagaya. */
   var pendingLogo = null;
-  var db = { parties: [], items: [], companies: [] };
+
+  /* ---------- Item ke sale units ----------
+     Ek item ke kai sale unit ho sakte hain. Bill par default khud aa jata
+     hai; user chahe to fehrist se koi aur chun le ya conversion badal de,
+     kyunki har piece ka wazan hamesha ek jaisa nahi hota. */
+  var unitRows = [], unitSeq = 0;
+
+  function loadUnitRows(itemId) {
+    unitRows = (db.itemUnits || [])
+      .filter(function (u) { return String(u.item_id) === String(itemId); })
+      .sort(function (a, b) { return (a.line_no || 0) - (b.line_no || 0); })
+      .map(function (u) {
+        return { _k:++unitSeq, id:u.id, unit:u.unit, factor:u.factor,
+                 rate:u.rate == null ? '' : u.rate, is_default:!!u.is_default };
+      });
+  }
+
+  function drawUnitRows() {
+    var box = $('unitRows'); if (!box) return;
+    var base = (editing && editing.unit) || 'pcs';
+    box.innerHTML = unitRows.length ? unitRows.map(function (u) {
+      return '<div class="urow" data-uk="' + u._k + '">' +
+        '<input data-uf="unit" type="text" value="' + esc(u.unit) + '" placeholder="Pcs">' +
+        '<input data-uf="factor" type="text" inputmode="decimal" value="' + esc(u.factor) +
+          '" placeholder="' + esc(base) + ' per 1">' +
+        '<input data-uf="rate" type="text" inputmode="decimal" value="' + esc(u.rate) +
+          '" placeholder="rate">' +
+        '<button type="button" data-udef="' + u._k + '" class="udef' + (u.is_default ? ' on' : '') +
+          '" title="Default unit">\u2713</button>' +
+        '<button type="button" data-urm="' + u._k + '" class="urm">\u00d7</button>' +
+        '</div>';
+    }).join('') : '<div class="hint" style="padding:2px 0 6px">Koi extra unit nahi \u2014 bill par ' +
+      esc(base) + ' hi aayega.</div>';
+
+    box.querySelectorAll('[data-urm]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = Number(b.getAttribute('data-urm'));
+        unitRows = unitRows.filter(function (u) { return u._k !== k; });
+        dirty = true; drawUnitRows();
+      });
+    });
+    box.querySelectorAll('[data-udef]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        var k = Number(b.getAttribute('data-udef'));
+        unitRows.forEach(function (u) { u.is_default = (u._k === k) ? !u.is_default : false; });
+        dirty = true; drawUnitRows();
+      });
+    });
+  }
+
+  function wireUnits() {
+    if (!$('addUnit')) return;
+    drawUnitRows();
+    $('unitRows').addEventListener('input', function (e) {
+      var f = e.target.getAttribute('data-uf'); if (!f) return;
+      var host = e.target.closest('[data-uk]'); if (!host) return;
+      var k = Number(host.getAttribute('data-uk'));
+      var u = unitRows.filter(function (x) { return x._k === k; })[0];
+      if (u) { u[f] = e.target.value; dirty = true; }
+    });
+    $('addUnit').addEventListener('click', function () {
+      unitRows.push({ _k:++unitSeq, id:null, unit:'', factor:'', rate:'',
+                      is_default:!unitRows.length });
+      dirty = true; drawUnitRows();
+      var rows = $('unitRows').querySelectorAll('.urow');
+      if (rows.length) rows[rows.length - 1].querySelector('[data-uf="unit"]').focus();
+    });
+  }
+
+  /* Sale units database mein likho \u2014 item save hone ke baad */
+  function saveUnitRows(itemId) {
+    var good = unitRows.filter(function (u) {
+      return String(u.unit || '').trim() && n(u.factor) > 0;
+    });
+    var keep = good.filter(function (u) { return u.id; }).map(function (u) { return u.id; });
+    var del = sb.from('item_units').delete().eq('item_id', itemId);
+    if (keep.length) del = del.not('id', 'in', '(' + keep.join(',') + ')');
+    return del.then(function () {
+      if (!good.length) return;
+      return sb.from('item_units').upsert(good.map(function (u, i) {
+        var row = { item_id:itemId, unit:String(u.unit).trim(), factor:n(u.factor),
+                    rate:String(u.rate).trim() === '' ? null : n(u.rate),
+                    is_default:!!u.is_default, line_no:i };
+        if (u.id) row.id = u.id;
+        return row;
+      }));
+    });
+  }
+  var db = { parties:[], items:[], companies:[], itemUnits:[] };
 
   /* ---------- helpers ---------- */
   function fmt(n) {
@@ -1681,6 +1809,15 @@
       '<div class="hint">Leave at 0 for a plain bill. You can still switch tax on per bill later.</div></div>' +
     '<div class="f"><label>HS code</label><input id="eHs" type="text" value="' + esc(r.hs_code) + '" autocomplete="off">' +
       '<div class="hint">Only needed on a sales tax invoice.</div></div>' +
+
+    '<div class="grp">Sale units</div>' +
+    '<div id="unitRows"></div>' +
+    '<button class="btn" id="addUnit" type="button" style="width:100%;margin:6px 0 4px">+ Sale unit</button>' +
+    '<div class="f"><div class="hint">Item is unit mein rakha jata hai: <b>' +
+      esc(r.unit || 'pcs') + '</b>. Agar isay kisi aur unit mein bhi bechte hain to yahan ' +
+      'daal dein \u2014 jaise <b>Pcs</b> aur uske saamne <b>47.5</b>, matlab ek piece ' +
+      esc(r.unit || 'pcs') + ' ke 47.5 ke barabar. Bill par wo unit chunte hi conversion ' +
+      'aur rate khud aa jayenge. Stock hamesha item ke apne unit mein hi ghatta hai.</div></div>' +
 
     (Number(r.avg_cost) || Number(r.stock_qty)
       ? '<div class="grp">Current stock</div>' +
@@ -2642,6 +2779,7 @@
     document.querySelectorAll('.et').forEach(function (x) {
       x.classList.toggle('on', x.getAttribute('data-v') === 'details');
     });
+    if (tab === 'items') loadUnitRows(rec ? rec.id : null);
     $('edBody').innerHTML = fieldset(editing);
     $('edDel').style.display = (rec && can('masters_delete')) ? '' : 'none';
     $('edBody').scrollTop = 0;
@@ -2665,6 +2803,7 @@
       };
     }
     wireLogo();
+    if (tab === 'items') wireUnits();
     $('edBody').addEventListener('input', function () { dirty = true; });
     $('eName').addEventListener('input', checkName);
     checkName();
@@ -3123,6 +3262,7 @@
       sb.from('items').select('*').is('deleted_at', null),
       sb.from('companies').select('*').is('deleted_at', null),
       sb.from('party_kinds').select('*'),
+      sb.from('item_units').select('*').order('line_no'),
       sb.from('parties').select('id,name'),
       sb.from('items').select('id,name')
     ]).then(function (r) {
@@ -3132,8 +3272,9 @@
       db.items     = r[1].data || [];
       db.companies = r[2].error ? [] : (r[2].data || []);   // SQL na chali ho to bhi app chale
       customKinds  = r[3].error ? [] : (r[3].data || []);   // custom party categories, SQL na chali ho to bhi app chale
-      dbAll.parties = r[4].error ? db.parties : (r[4].data || []);
-      dbAll.items   = r[5].error ? db.items   : (r[5].data || []);
+      db.itemUnits = r[4].error ? [] : (r[4].data || []);   // sale units, SQL na chali ho to bhi app chale
+      dbAll.parties = r[5].error ? db.parties : (r[5].data || []);
+      dbAll.items   = r[6].error ? db.items   : (r[6].data || []);
       cacheSave('parties', db.parties); cacheSave('items', db.items); cacheSave('companies', db.companies);
       syncNote('');
       render();
@@ -3260,6 +3401,16 @@
         others.forEach(function (c) {
           sb.from('companies').update({ is_default:false }).eq('id', c.id).then(function () {});
         });
+      }
+      // Sale units item ke saath save hote hain (alag table mein rehte hain)
+      if (tab === 'items') {
+        saveUnitRows(recId).then(function () {
+          return sb.from('item_units').select('*').order('line_no');
+        }).then(function (ur) {
+          if (ur && !ur.error) db.itemUnits = ur.data || [];
+          try { window.parent.postMessage({ msg:'refresh', kind:'items' }, '*'); } catch (err) {}
+          render();
+        }).catch(function (e2) { sayErr(e2, 'save sale units'); });
       }
       syncNote('Saved', '#7DC9A9');
       render();
@@ -4184,6 +4335,202 @@
     });
   }
 
+  /* ---------- Restore from backup ----------
+     Roz ki email mein jo JSON file aati hai, us se poora system wapas
+     laaya ja sakta hai. Do tareeqe hain, aur dono se PEHLE system khud
+     ek taaza backup utaar deta hai — taake ghalti ho jaye to wapas
+     laut sakein. Yehi sab se ahem hifazat hai. */
+  var rsData = null, rsPlan = null;
+
+  var RS_HINT = {
+    missing: 'Jo record file mein hai magar database mein nahi, sirf wo daala jayega. ' +
+             'Jo pehle se mojood hai usay haath nahi lagta.',
+    replace: 'Database bilkul wohi ban jayega jo file mein hai. Jo file mein nahi, ' +
+             'wo urh jayega. Yeh us waqt ke liye hai jab poori halat wapas leni ho.'
+  };
+
+  function openRestore() {
+    $('restoreModal').classList.add('on');
+    rsData = null; rsPlan = null;
+    $('rsFile').value = ''; $('rsConfirm').value = '';
+    $('rsPlan').innerHTML = '';
+    $('rsConfirmBox').style.display = 'none';
+    $('rsGo').style.display = 'none';
+    $('rsModeHint').textContent = RS_HINT[$('rsMode').value];
+  }
+
+  function readBackupFile() {
+    var f = $('rsFile').files[0];
+    if (!f) return Promise.reject(new Error('Pehle backup file chunein'));
+    return new Promise(function (res, rej) {
+      var fr = new FileReader();
+      fr.onload = function () {
+        try {
+          var j = JSON.parse(fr.result);
+          if (j.format !== 'qtc-restore') throw new Error('Yeh restore wali file nahi lagti');
+          if (!j.tables || !j.order) throw new Error('File adhoori lagti hai');
+          res(j);
+        } catch (e) { rej(new Error('File padhi nahi ja saki \u2014 ' + e.message)); }
+      };
+      fr.onerror = function () { rej(new Error('File padhi nahi ja saki')); };
+      fr.readAsText(f);
+    });
+  }
+
+  /* Kya hoga, wo pehle dikhao — commit se pehle */
+  function buildRestorePlan(j) {
+    var mode = $('rsMode').value;
+    return Promise.all(j.order.map(function (t) {
+      return sb.from(t).select('id').then(function (r) {
+        var have = {};
+        (r.error ? [] : (r.data || [])).forEach(function (x) { have[x.id] = true; });
+        var rows = j.tables[t] || [];
+        var add = 0, upd = 0;
+        rows.forEach(function (x) { if (have[x.id]) upd++; else add++; });
+        var del = mode === 'replace'
+          ? Object.keys(have).filter(function (id) {
+              return !rows.some(function (x) { return String(x.id) === String(id); });
+            }).length
+          : 0;
+        return { table:t, add:add, upd:mode === 'replace' ? upd : 0, del:del,
+                 total:rows.length, err:!!r.error };
+      });
+    }));
+  }
+
+  function drawRestorePlan(plan) {
+    var any = plan.filter(function (p) { return p.add || p.upd || p.del; });
+    $('rsPlan').innerHTML = '<div class="grp">Kya hoga</div>' +
+      (any.length
+        ? '<table class="ltab"><thead><tr><th>Table</th>' +
+          '<th style="text-align:right">Nayi</th><th style="text-align:right">Badlengi</th>' +
+          '<th style="text-align:right">Urhengi</th></tr></thead><tbody>' +
+          any.map(function (p) {
+            return '<tr><td>' + esc(p.table) + '</td>' +
+              '<td class="r">' + (p.add || '\u2014') + '</td>' +
+              '<td class="r">' + (p.upd || '\u2014') + '</td>' +
+              '<td class="r' + (p.del ? ' neg' : '') + '">' + (p.del || '\u2014') + '</td></tr>';
+          }).join('') + '</tbody></table>'
+        : '<div class="hint">Koi tabdeeli nahi \u2014 database pehle se file jaisa hai.</div>') +
+      '<div class="f"><div class="hint">Restore se pehle system khud ek taaza backup file ' +
+      'utaar dega. Ghalti ho jaye to usi se wapas laut sakte hain.</div></div>';
+  }
+
+  $('restoreBtn').addEventListener('click', openRestore);
+  $('rsClose').addEventListener('click', function () { $('restoreModal').classList.remove('on'); });
+  $('rsMode').addEventListener('change', function () {
+    $('rsModeHint').textContent = RS_HINT[this.value];
+    if (rsData) { $('rsCheck').click(); }
+  });
+
+  $('rsCheck').addEventListener('click', function () {
+    var btn = this; btn.disabled = true; btn.textContent = 'Dekh rahe hain\u2026';
+    readBackupFile().then(function (j) {
+      rsData = j;
+      return buildRestorePlan(j);
+    }).then(function (plan) {
+      rsPlan = plan;
+      drawRestorePlan(plan);
+      var any = plan.some(function (p) { return p.add || p.upd || p.del; });
+      $('rsConfirmBox').style.display = any ? '' : 'none';
+      $('rsGo').style.display = any ? '' : 'none';
+      btn.disabled = false; btn.textContent = 'Check karein';
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = 'Check karein';
+      toast(e.message, true);
+    });
+  });
+
+  $('rsGo').addEventListener('click', function () {
+    if (!rsData) { toast('Pehle file check karein', true); return; }
+    if ($('rsConfirm').value.trim().toUpperCase() !== 'RESTORE') {
+      toast('Confirm karne ke liye RESTORE likhein', true); return;
+    }
+    var btn = this; btn.disabled = true; btn.textContent = 'Restore ho raha hai\u2026';
+    // Pehle abhi ka data utaar lo — wapas laut'ne ka raasta khula rahe
+    downloadSafetyBackup().then(function () {
+      return runRestore(rsData, $('rsMode').value);
+    }).then(function (done) {
+      btn.disabled = false; btn.textContent = 'Restore';
+      $('restoreModal').classList.remove('on');
+      toast('Restore mukammal \u2014 ' + done + ' rows. Costing dobara chal rahi hai\u2026');
+      return sb.rpc('recompute_all_item_costs', { lock_date:null });
+    }).then(function () {
+      loadAll();
+      toast('Sab kuch wapas aa gaya');
+    }).catch(function (e) {
+      btn.disabled = false; btn.textContent = 'Restore';
+      sayErr(e, 'restore');
+    });
+  });
+
+  /* Restore se pehle abhi ka poora data utaar do */
+  function downloadSafetyBackup() {
+    var order = (rsData && rsData.order) || [];
+    return Promise.all(order.map(function (t) {
+      return sb.from(t).select('*').then(function (r) {
+        return { t:t, rows:r.error ? [] : (r.data || []) };
+      });
+    })).then(function (all) {
+      var tables = {};
+      all.forEach(function (x) { tables[x.t] = x.rows; });
+      var blob = new Blob([JSON.stringify({
+        format:'qtc-restore', version:1, taken_at:new Date().toISOString(),
+        order:order, tables:tables
+      })], { type:'application/json' });
+      var a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'QTC-Before-Restore-' + today() + '.json';
+      a.click();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 4000);
+    });
+  }
+
+  /* Asal kaam. Tarteeb ahem hai — pehle wo cheezein jin par baqi khadi
+     hain. Urhana ulti tarteeb mein, warna foreign key rok deti hai. */
+  function runRestore(j, mode) {
+    var order = j.order, done = 0;
+    var chain = Promise.resolve();
+
+    if (mode === 'replace') {
+      order.slice().reverse().forEach(function (t) {
+        chain = chain.then(function () {
+          var rows = j.tables[t] || [];
+          var keep = rows.map(function (x) { return x.id; }).filter(Boolean);
+          var q = sb.from(t).delete();
+          q = keep.length ? q.not('id', 'in', '(' + keep.join(',') + ')')
+                          : q.gte('id', '00000000-0000-0000-0000-000000000000');
+          return q.then(function () {});
+        });
+      });
+    }
+
+    order.forEach(function (t) {
+      chain = chain.then(function () {
+        var rows = j.tables[t] || [];
+        if (!rows.length) return;
+        // 200 ki qist mein — ek saath bhejne par request bohat bari ho jati hai
+        var parts = [];
+        for (var i = 0; i < rows.length; i += 200) parts.push(rows.slice(i, i + 200));
+        var p = Promise.resolve();
+        parts.forEach(function (part) {
+          p = p.then(function () {
+            var q = mode === 'replace'
+              ? sb.from(t).upsert(part)
+              : sb.from(t).upsert(part, { ignoreDuplicates:true });
+            return q.then(function (r) {
+              if (r.error) throw new Error(t + ': ' + r.error.message);
+              done += part.length;
+            });
+          });
+        });
+        return p;
+      });
+    });
+
+    return chain.then(function () { return done; });
+  }
+
   $('agingBtn').addEventListener('click', openAgingModal);
   $('agingClose').addEventListener('click', function () { $('agingModal').classList.remove('on'); });
   $('agAsof').addEventListener('change', loadAging);
@@ -5007,6 +5354,8 @@
     $('warehousesBtn').style.display = can('masters_edit') ? '' : 'none';
     $('setupBtn').style.display      = can('masters_edit') ? '' : 'none';
     $('agingBtn').style.display      = can('reports_view') ? '' : 'none';
+    // Restore poore system ko badal deta hai — sirf admin
+    $('restoreBtn').style.display    = !!(me && me.isAdmin) ? '' : 'none';
     $('importBtn').style.display  = can('masters_import') && (tab === 'parties' || tab === 'items') ? '' : 'none';
   }
   /* ---------- Realtime: 20-second polling ki jagah, sirf jab actual change ho tab refresh ---------- */

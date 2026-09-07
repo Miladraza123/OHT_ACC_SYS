@@ -31,14 +31,8 @@ async function signIn() {
 }
 
 async function fetchAll() {
-  const tables = [
-    'parties', 'items', 'companies', 'vouchers', 'voucher_lines', 'sheets',
-    'sales_returns', 'sales_return_lines',
-    'service_invoices', 'service_invoice_lines', 'service_categories',
-    'coils', 'material_inwards', 'cutting_jobs', 'cutting_job_inputs',
-    'cutting_job_outputs', 'delivery_challans', 'delivery_challan_lines',
-    'material_returns', 'material_return_lines', 'warehouses'
-  ];
+  // Restore ke liye HAR table chahiye — warna file se system wapas nahi aata
+  const tables = RESTORE_ORDER;
   const out = {};
   for (const t of tables) {
     const { data, error } = await sb.from(t).select('*');
@@ -57,6 +51,11 @@ const SV_C = 'FF8A5A00', SV_BG = 'FFFBF3E6';
 const thinBorder = { top: { style: 'thin', color: { argb: HAIR } }, bottom: { style: 'thin', color: { argb: HAIR } },
                       left: { style: 'thin', color: { argb: HAIR } }, right: { style: 'thin', color: { argb: HAIR } } };
 const mediumTB = { top: { style: 'medium', color: { argb: INK } }, bottom: { style: 'medium', color: { argb: INK } } };
+
+function fmt2(v) {
+  var n = Number(v) || 0;
+  return n.toLocaleString('en-PK', { maximumFractionDigits: 3 });
+}
 
 function setCell(ws, row, col, val, opts) {
   opts = opts || {};
@@ -242,10 +241,19 @@ async function buildExcel(data) {
       setCell(wsB, rowB, i + 1, h, { header: true, align: i >= 3 ? 'right' : 'left' });
     }); rowB++;
     lines.forEach(function (l, idx) {
-      var qty = Number(l.qty) || 0, rate = Number(l.rate) || 0, amt = Number(l.amount) || (qty * rate);
+      /* Cheez kisi aur unit mein bhi bik sakti hai. Bill par wohi qty aur
+         unit chapte hain jo user ne likhe; item ka apna wazan saath mein
+         chhote harfon jaisa alag column mein. */
+      var alt   = !!l.sale_unit;
+      var qty   = alt ? (Number(l.sale_qty) || 0) : (Number(l.qty) || 0);
+      var unit  = alt ? l.sale_unit : (l.unit || '');
+      var rate  = Number(l.rate) || 0;
+      var amt   = Number(l.amount) || (qty * rate);
       setCell(wsB, rowB, 1, idx + 1, { color: MUTE, align: 'center', border: true });
-      setCell(wsB, rowB, 2, itemName[l.item_id] || '', { border: true });
-      setCell(wsB, rowB, 3, l.unit || '', { align: 'center', border: true });
+      setCell(wsB, rowB, 2, (itemName[l.item_id] || '') +
+        (alt ? '  (' + fmt2(l.unit_factor) + ' ' + (l.unit || '') + ' per ' + l.sale_unit +
+               '  \u00b7  ' + fmt2(l.qty) + ' ' + (l.unit || '') + ')' : ''), { border: true });
+      setCell(wsB, rowB, 3, unit, { align: 'center', border: true });
       setCell(wsB, rowB, 4, qty, { bold: true, align: 'right', border: true, numFmt: INT_FMT });
       setCell(wsB, rowB, 5, rate, { align: 'right', border: true, numFmt: NUM_FMT });
       setCell(wsB, rowB, 6, amt, { bold: true, align: 'right', border: true, numFmt: NUM_FMT });
@@ -416,7 +424,46 @@ async function buildExcel(data) {
   return wb.xlsx.writeBuffer();
 }
 
-async function sendEmail(buffer, filename) {
+/* ============================================================
+   RESTORE KE LIYE
+   Excel insaan ke padhne ke liye hai — us mein na ID hoti hai, na
+   rishtay. Us se system wapas nahi aa sakta. Is liye saath mein yeh
+   JSON bhi jati hai: har table poori, apni ID aur rishton ke saath,
+   bilkul waisi jaisi database mein hai.
+   ============================================================ */
+function buildRestoreJson(data) {
+  return Buffer.from(JSON.stringify({
+    format: 'qtc-restore',
+    version: 1,
+    taken_at: new Date().toISOString(),
+    // Tarteeb ahem hai — restore isi tarteeb se daalta hai, taake
+    // jis cheez par koi doosri cheez khadi hai wo pehle mojood ho.
+    order: RESTORE_ORDER,
+    tables: data
+  }), 'utf8');
+}
+
+/* Pehle wo tables jin par baqi khadi hain, phir un par khadi hui cheezein */
+const RESTORE_ORDER = [
+  'app_settings', 'cutting_settings', 'period_lock',
+  'warehouses', 'companies', 'parties', 'party_kinds', 'items', 'item_units',
+  'machines', 'operators', 'service_categories',
+  'vouchers', 'voucher_lines',
+  'sales_returns', 'sales_return_lines',
+  'quotations', 'quotation_lines',
+  'purchase_orders', 'po_lines',
+  'stock_transfers', 'stock_transfer_lines', 'stock_adjustments',
+  'sheets',
+  'material_inwards', 'coils',
+  'cutting_jobs', 'cutting_job_inputs', 'cutting_job_outputs',
+  'delivery_challans', 'delivery_challan_lines',
+  'material_returns', 'material_return_lines',
+  'service_invoices', 'service_invoice_lines',
+  'service_invoice_jobs', 'service_invoice_challans',
+  'stock_conversions', 'stock_conversion_inputs', 'stock_conversion_outputs'
+];
+
+async function sendEmail(buffer, filename, jsonBuffer, jsonName) {
   const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD }
@@ -425,8 +472,16 @@ async function sendEmail(buffer, filename) {
     from: process.env.GMAIL_USER,
     to: process.env.BACKUP_TO_EMAIL,
     subject: 'QTC Daily Backup \u2014 ' + new Date().toISOString().slice(0, 10),
-    text: 'Aaj ka poora QTC data attached hai \u2014 accounting aur cutting dono. Ye backup roz khud-b-khud banti hai.',
-    attachments: [{ filename: filename, content: buffer }]
+    text: 'Aaj ka poora QTC data attached hai \u2014 accounting aur cutting dono.\n\n' +
+          'Do file hain:\n' +
+          '\u2022 ' + filename + ' \u2014 padhne ke liye (Excel)\n' +
+          '\u2022 ' + jsonName + ' \u2014 system wapas laane ke liye. Isay kholne ki zaroorat nahi, ' +
+          'bas mehfooz rakhein. Zaroorat pade to Masters \u2192 Restore se yehi file daali jati hai.\n\n' +
+          'Ye backup roz khud-b-khud banti hai.',
+    attachments: [
+      { filename: filename, content: buffer },
+      { filename: jsonName, content: jsonBuffer }
+    ]
   });
 }
 
@@ -437,8 +492,11 @@ async function main() {
   const buffer = await buildExcel(data);
   const stamp = new Date().toISOString().slice(0, 10);
   const filename = 'QTC-Backup-' + stamp + '.xlsx';
-  await sendEmail(buffer, filename);
-  console.log('Backup emailed: ' + filename);
+  const jsonName = 'QTC-Restore-' + stamp + '.json';
+  const jsonBuffer = buildRestoreJson(data);
+  await sendEmail(buffer, filename, jsonBuffer, jsonName);
+  console.log('Backup emailed: ' + filename + ' + ' + jsonName +
+              ' (' + Math.round(jsonBuffer.length / 1024) + ' KB)');
 }
 
 main().catch(function (e) {
