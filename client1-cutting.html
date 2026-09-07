@@ -1445,7 +1445,8 @@
     $('edBody').innerHTML = html;
     // Print sirf save shuda documents par — naye par chhapne ko kuch hai hi nahi
     $('edPrint').style.display =
-      (doc && (kind === 'challan' || kind === 'invoice' || kind === 'inward')) ? '' : 'none';
+      (doc && (kind === 'challan' || kind === 'invoice' || kind === 'inward' || kind === 'job'))
+        ? '' : 'none';
     // Save ki visibility HAR DAFA reset karo. Warna ek dafa koi read-only
     // document (jaise coil ki tafseel) kholne ke baad Save hamesha ke liye
     // chhup jata hai — kyunki wahan usay display:none kiya jata hai.
@@ -4482,10 +4483,92 @@
     doPrint($('sheet'), fileSafe(d.ino) + '-' + fileSafe(p ? p.name : 'Party') + '-' + fileDate(d.idate));
   }
 
+  /* ---------- Cutting Job ----------
+     Yeh ANDAR ka kaghaz hai — operator aur supervisor ke liye. Is liye
+     is par cutting loss bhi saaf likha jata hai (party wale challan par
+     nahi likha jata) aur dastakhat ke khaane bhi andar ke logon ke hain.
+
+     Size usi unit mein chapti hai jis mein daali gayi thi — kuch mm
+     mein, kuch ft mein. Jo unit mein kaam hua wohi kaghaz par ho, warna
+     operator ko do number dekh kar shak hota hai. Wazan hamesha KG. */
+  function printJob() {
+    if (!doc) return;
+    var d = doc, p = byId(parties, d.party_id);
+
+    var inGood = jobInputs.filter(function (l) { return l.coil_id && num(l.input_weight) > 0; });
+    if (!inGood.length) { toast('Pehle coil aur weight daalein', true); return; }
+
+    var inT = 0;
+    var inRows = inGood.map(function (l, i) {
+      var c = byId(coils, l.coil_id);
+      inT += num(l.input_weight);
+      return '<tr><td class="c">' + (i + 1) + '</td>' +
+        '<td>' + esc(c ? c.coil_serial : '') +
+          (c && c.party_coil_ref ? '<div style="font-size:8.5pt;color:#9C9384">Ref ' +
+            esc(c.party_coil_ref) + '</div>' : '') + '</td>' +
+        '<td>' + esc(c ? [c.material_type, c.grade].filter(Boolean).join(' / ') : '') + '</td>' +
+        '<td class="c">' + esc(c && c.thickness_mm ? c.thickness_mm : '') + '</td>' +
+        '<td class="c">' + esc(c && c.width_mm ? c.width_mm + ' mm' : '') + '</td>' +
+        '<td class="r">' + kg(l.input_weight) + '</td></tr>';
+    }).join('');
+
+    var outGood = jobOutputs.filter(function (l) { return num(l.output_weight) > 0 || num(l.pieces) > 0; });
+    var outT = 0, pcsT = 0;
+    var outRows = outGood.map(function (l, i) {
+      outT += num(l.output_weight); pcsT += num(l.pieces);
+      var c = byId(coils, l.coil_id);
+      return '<tr><td class="c">' + (i + 1) + '</td>' +
+        '<td class="c">' + esc(sizeText(l)) + '</td>' +
+        '<td>' + esc(c ? c.coil_serial : '') + '</td>' +
+        '<td class="r">' + (num(l.pieces) ? kg(l.pieces) : '') + '</td>' +
+        '<td class="r">' + kg(l.output_weight) + '</td>' +
+        '<td>' + esc(l.remarks || '') + '</td></tr>';
+    }).join('');
+
+    var loss = inT - outT;
+    var outFoot = '<tr><td colspan="3" class="k">Total</td>' +
+      '<td class="v">' + (pcsT ? kg(pcsT) : '') + '</td>' +
+      '<td class="v">' + kg(outT) + '</td><td></td></tr>' +
+      '<tr><td colspan="4" class="k">Cutting loss (' + kg(inT) + ' \u2212 ' + kg(outT) + ')</td>' +
+      '<td class="v">' + kg(loss) + '</td><td class="c">' +
+        (inT > 0 ? (Math.round(loss / inT * 1000) / 10) + '%' : '') + '</td></tr>';
+
+    $('sheet').innerHTML =
+      firmHead(byId(companies, d.company_id) || defFirm(), 'Cutting Job', d.jno, d.jdate) +
+      partyBlock('Party ka maal', p, metaBlock([
+        ['Warehouse', nameOf(warehouses, d.warehouse_id, '')],
+        ['Machine', nameOf(machines, d.machine_id, '')],
+        ['Operator', nameOf(operators, d.operator_id, '')],
+        ['Status', d.status]
+      ])) +
+
+      '<table><thead><tr><th class="c" style="width:8mm">#</th><th>Coil</th><th>Material</th>' +
+      '<th class="c" style="width:16mm">Thk mm</th><th class="c" style="width:20mm">Width</th>' +
+      '<th class="r" style="width:26mm">Laga weight</th></tr></thead>' +
+      '<tbody>' + inRows + '</tbody>' +
+      '<tfoot><tr><td colspan="5" class="k">Kul input</td>' +
+      '<td class="v">' + kg(inT) + ' KG</td></tr></tfoot></table>' +
+
+      '<table style="margin-top:5mm"><thead><tr><th class="c" style="width:8mm">#</th>' +
+      '<th class="c" style="width:32mm">Cut size</th><th>Coil</th>' +
+      '<th class="r" style="width:18mm">Pcs</th><th class="r" style="width:26mm">Bana weight</th>' +
+      '<th style="width:34mm">Remarks</th></tr></thead>' +
+      '<tbody>' + (outRows || '<tr><td colspan="6" class="c">Abhi koi output darj nahi</td></tr>') +
+      '</tbody><tfoot>' + outFoot + '</tfoot></table>' +
+
+      '<div class="note">Andar ke istemaal ke liye. Yeh maal customer ki apni milkiyat hai.' +
+      (d.remarks ? '\n' + d.remarks : '') + '</div>' +
+      '<div class="foot"><div class="sign">Operator</div><div class="sign">Supervisor</div>' +
+      '<div class="sign">Checked by</div></div>';
+
+    doPrint($('sheet'), fileSafe(d.jno) + '-' + fileSafe(p ? p.name : 'Party') + '-' + fileDate(d.jdate));
+  }
+
   $('edPrint').addEventListener('click', function () {
     if (edKind === 'challan') printChallan();
     else if (edKind === 'invoice') printInvoice();
     else if (edKind === 'inward') printInward();
+    else if (edKind === 'job') printJob();
   });
 
   (function boot() {
