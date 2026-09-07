@@ -125,6 +125,10 @@
   .brow .amt .tag { display:block; font-family:'IBM Plex Sans',sans-serif; font-size:9.5px;
                     font-weight:600; letter-spacing:.7px; margin-top:1px; }
   .amt.due .tag { color:var(--debit); } .amt.clr .tag { color:var(--credit); }
+  .loadmore { display:block; width:100%; padding:13px; margin:10px 0 4px; border:1px solid var(--line);
+              border-radius:10px; background:none; font-size:14px; font-weight:600; color:var(--ink); }
+  .loadmore span { display:block; font-size:12px; font-weight:400; color:var(--mute); margin-top:2px; }
+
   .datehead { position:sticky; top:0; z-index:2; background:var(--panel); color:var(--mute);
               font-size:10.5px; font-weight:700; letter-spacing:1.1px; padding:5px 12px;
               border-top:1px solid var(--hair); border-bottom:1px solid var(--hair); }
@@ -452,6 +456,12 @@
   var returns = [];   // Sales Returns — asal financial impact hai, is liye alag nahi (ledger/stock mein shamil)
   var parties = [], items = [], bills = [], firms = [], warehouses = [], transfers = [],
       itemUnits = [], lineSeq = 0;
+
+  /* Ek dafa mein kitne bill. Har qism ka apna hissa — warna jis qism ke
+     bill naye hote wohi poori hadd bhar leta aur doosri tab khali lagti. */
+  var PAGE = 300;
+  var more = { sale:false, purchase:false };   // aur bhi hain?
+  var loadingMore = false;
   var APP = window.APP_CONFIG;
 
   /* ---------- Session ka refresh ----------
@@ -756,7 +766,64 @@
         '<div class="amt ' + (t.due > 0 ? 'due' : 'clr') + '">' + money(t.grand) +
         '<span class="tag">' + (t.due > 0 ? money(t.due) + ' DUE' : 'PAID') + '</span></div></div>';
     });
+
+    /* Aur bhi bill hain to unhein mangwane ka rasta \u2014 warna user ko
+       lagta hai ke bas itne hi hain. Search chal raha ho to nahi, kyunki
+       wo sirf mangaye hue bills mein dhoondta hai. */
+    if (!q && more[vtype]) {
+      html += '<button class="loadmore" id="loadMore">Aur bill dikhayein' +
+              '<span>' + list.length + ' dikh rahe hain</span></button>';
+    }
     box.innerHTML = html;
+
+    if ($('loadMore')) {
+      $('loadMore').addEventListener('click', function () {
+        if (loadingMore) return;
+        loadingMore = true;
+        this.textContent = 'Load ho rahe hain\u2026';
+        loadMoreBills(vtype);
+      });
+    }
+  }
+
+  /* Lines ko un ke bills se jodo */
+  function attachLines(rows) {
+    var byV = {};
+    rows.forEach(function (l) { (byV[l.voucher_id] = byV[l.voucher_id] || []).push(l); });
+    bills.forEach(function (b) {
+      if (byV[b.id]) {
+        b.lines = byV[b.id].sort(function (a, c) { return (a.line_no || 0) - (c.line_no || 0); });
+      } else if (!b.lines) {
+        b.lines = [];
+      }
+    });
+  }
+
+  /* Agle PAGE bills mangwao \u2014 jo abhi hain un se purane */
+  function loadMoreBills(kind) {
+    var have = bills.filter(function (b) { return b.vtype === kind; });
+    var oldest = have.reduce(function (d, b) {
+      return (!d || (b.vdate && b.vdate < d)) ? b.vdate : d;
+    }, null);
+    var q = sb.from('vouchers').select('*').is('deleted_at', null).eq('vtype', kind);
+    if (oldest) q = q.lte('vdate', oldest);
+    q.order('vdate', { ascending:false }).limit(PAGE + 50).then(function (r) {
+      if (r.error) { loadingMore = false; sayErr(r.error, 'load bills'); render(); return; }
+      var seen = {};
+      bills.forEach(function (b) { seen[b.id] = true; });
+      var fresh = (r.data || []).filter(function (b) { return !seen[b.id]; });
+      more[kind] = fresh.length > 0 && (r.data || []).length >= PAGE + 50;
+      if (!fresh.length) { more[kind] = false; loadingMore = false; render(); return; }
+      bills = bills.concat(fresh);
+      // in naye bills ki lines bhi chahiye
+      return sb.from('voucher_lines').select('*')
+        .in('voucher_id', fresh.map(function (b) { return b.id; }))
+        .then(function (lr) {
+          if (!lr.error) attachLines(lr.data || []);
+          loadingMore = false;
+          render();
+        });
+    }).catch(function (e) { loadingMore = false; sayErr(e, 'load bills'); render(); });
   }
 
   /* ---------- Quotations / Purchase Orders list — bilkul alag, koi due/paid concept nahi ---------- */
@@ -818,9 +885,26 @@
     return '<div class="docav doc-' + esc(type) + '"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" ' +
       'stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">' + path + '</svg></div>';
   }
+  /* Tab par jo ginti dikhti hai wo POORE database ki hai, sirf laaye
+     hue bills ki nahi — warna 20,000 bills par bhi "(300)" likha aata
+     aur user ko lagta ke bas itne hi hain. */
+  var totalCount = { sale:null, purchase:null };
+
   function countOf(t) {
-    var n = bills.filter(function (b) { return b.vtype === t; }).length;
+    var n = totalCount[t];
+    if (n == null) n = bills.filter(function (b) { return b.vtype === t; }).length;
     return n ? '(' + n + ')' : '';
+  }
+
+  function loadCounts() {
+    if (!sb) return;
+    ['sale', 'purchase'].forEach(function (t) {
+      sb.from('vouchers').select('id', { count:'exact', head:true })
+        .is('deleted_at', null).eq('vtype', t)
+        .then(function (r) {
+          if (!r.error) { totalCount[t] = r.count || 0; render(); }
+        }).catch(function () {});
+    });
   }
   function normalise(b) { b.lines = b.lines || []; return b; }
 
@@ -2856,7 +2940,16 @@
         return Promise.all([
           sb.from('parties').select('*'),
           sb.from('items').select('*'),
-          sb.from('vouchers').select('*').is('deleted_at', null).order('vdate', { ascending:false }).limit(600),
+          /* Sale aur purchase ki ALAG query. Pehle ek hi query 600 laati
+             thi aur tab ke mutabiq chhaanti thi — magar jis qism ke bill
+             naye hote, wohi 600 bhar leta aur doosri tab tقریban khali
+             nazar aati thi. Ab dono ko apna hissa milta hai. */
+          sb.from('vouchers').select('*').is('deleted_at', null).eq('vtype', 'sale')
+            .order('vdate', { ascending:false }).limit(PAGE),
+          sb.from('vouchers').select('*').is('deleted_at', null).eq('vtype', 'purchase')
+            .order('vdate', { ascending:false }).limit(PAGE),
+          /* Sirf un bills ki lines jo screen par aayen — poori 68,000
+             lines lana browser ko bitha deta hai. */
           sb.from('voucher_lines').select('*'),
           sb.from('companies').select('*'),
           ledgerVoucherQuery,
@@ -2878,45 +2971,44 @@
           r.slice(0, 4).forEach(function (x) { if (x.error) throw x.error; });
           parties = r[0].data || [];
           items   = r[1].data || [];
-          bills   = r[2].data || [];
-          firms   = r[4].error ? [] : (r[4].data || []);        // SQL na chali ho to bhi bill bane
-          warehouses = r[15] && !r[15].error ? (r[15].data || []) : [];
-          transfers = r[16] && !r[16].error ? (r[16].data || []) : [];
-          itemUnits = r[18] && !r[18].error ? (r[18].data || []) : [];   // SQL na chali ho to bhi bill bane
+          // Sale aur purchase alag alag aate hain, phir mila diye jate hain
+          bills   = (r[2].data || []).concat(r[3].data || []);
+          more.sale     = (r[2].data || []).length >= PAGE;
+          more.purchase = (r[3].data || []).length >= PAGE;
+          firms   = r[5].error ? [] : (r[5].data || []);        // SQL na chali ho to bhi bill bane
+          warehouses = r[16] && !r[16].error ? (r[16].data || []) : [];
+          transfers = r[17] && !r[17].error ? (r[17].data || []) : [];
+          itemUnits = r[19] && !r[19].error ? (r[19].data || []) : [];   // SQL na chali ho to bhi bill bane
           var byTr = {};
-          (r[17] && !r[17].error ? (r[17].data || []) : []).forEach(function (l) {
+          (r[18] && !r[18].error ? (r[18].data || []) : []).forEach(function (l) {
             (byTr[l.transfer_id] = byTr[l.transfer_id] || []).push(l);
           });
           transfers.forEach(function (t) { t.lines = (byTr[t.id] || []).sort(function (a, b) { return (a.line_no || 0) - (b.line_no || 0); }); });
-          ledgerVouchers = r[5].error ? [] : (r[5].data || []); // party balance ke liye poora/lock-ke-baad set
-          sheets  = r[6].error ? [] : (r[6].data || []);        // ledger sheets
+          ledgerVouchers = r[6].error ? [] : (r[6].data || []); // party balance ke liye poora/lock-ke-baad set
+          sheets  = r[7].error ? [] : (r[7].data || []);        // ledger sheets
           lockDate = ld; snapshotActive = active; openingBalances = ob;
-          allVnos = r[11].error ? bills : (r[11].data || []);   // fail ho to kam se kam active bills se hi kaam chale
+          allVnos = r[12].error ? bills : (r[12].data || []);   // fail ho to kam se kam active bills se hi kaam chale
 
           // Quotations aur Purchase Orders — bilkul alag, koi balance/stock impact nahi
-          quotes = r[7].error ? [] : (r[7].data || []);
-          pos    = r[9].error ? [] : (r[9].data || []);
-          var byQ = {}; (r[8].error ? [] : (r[8].data || [])).forEach(function (l) { (byQ[l.quotation_id] = byQ[l.quotation_id] || []).push(l); });
+          quotes = r[8].error ? [] : (r[8].data || []);
+          pos    = r[10].error ? [] : (r[10].data || []);
+          var byQ = {}; (r[9].error ? [] : (r[9].data || [])).forEach(function (l) { (byQ[l.quotation_id] = byQ[l.quotation_id] || []).push(l); });
           quotes.forEach(function (q) { q.lines = (byQ[q.id] || []).sort(function (a, c) { return (a.line_no || 0) - (c.line_no || 0); }); });
-          var byP = {}; (r[10].error ? [] : (r[10].data || [])).forEach(function (l) { (byP[l.po_id] = byP[l.po_id] || []).push(l); });
+          var byP = {}; (r[11].error ? [] : (r[11].data || [])).forEach(function (l) { (byP[l.po_id] = byP[l.po_id] || []).push(l); });
           pos.forEach(function (p) { p.lines = (byP[p.id] || []).sort(function (a, c) { return (a.line_no || 0) - (c.line_no || 0); }); });
 
           // Sales Returns — asal financial impact hai (party balance/stock), is liye
           // ledgerReturns ledgerVouchers jaisa hi scope follow karta hai (lock-ke-baad ya poora)
-          returns = r[12].error ? [] : (r[12].data || []);
-          var byR = {}; (r[13].error ? [] : (r[13].data || [])).forEach(function (l) { (byR[l.return_id] = byR[l.return_id] || []).push(l); });
+          returns = r[13].error ? [] : (r[13].data || []);
+          var byR = {}; (r[14].error ? [] : (r[14].data || [])).forEach(function (l) { (byR[l.return_id] = byR[l.return_id] || []).push(l); });
           returns.forEach(function (rr) { rr.lines = (byR[rr.id] || []).sort(function (a, c) { return (a.line_no || 0) - (c.line_no || 0); }); });
-          ledgerReturns = r[14].error ? [] : (r[14].data || []);
+          ledgerReturns = r[15].error ? [] : (r[15].data || []);
 
           // lock set hai lekin snapshot missing/stale mile — masters.html khud theek kar lega
           // agli baar wahan se khula jaye; yahan billing.html mein sirf safe fallback kaafi hai
 
-          var byV = {};
-          (r[3].data || []).forEach(function (l) { (byV[l.voucher_id] = byV[l.voucher_id] || []).push(l); });
-          bills.forEach(function (b) {
-            b.lines = (byV[b.id] || []).sort(function (a, c) { return (a.line_no || 0) - (c.line_no || 0); });
-          });
-          syncNote(''); render(); tryOpenWanted();
+          attachLines(r[4].data || []);
+          syncNote(''); render(); loadCounts(); tryOpenWanted();
           // agar bill khula hua hai aur sheets ab aa gayi hain to balance dobara theek karo
           refreshOpenBillBalance();
           cacheSave('parties', parties); cacheSave('items', items); cacheSave('bills', bills);
