@@ -52,6 +52,47 @@ const thinBorder = { top: { style: 'thin', color: { argb: HAIR } }, bottom: { st
                       left: { style: 'thin', color: { argb: HAIR } }, right: { style: 'thin', color: { argb: HAIR } } };
 const mediumTB = { top: { style: 'medium', color: { argb: INK } }, bottom: { style: 'medium', color: { argb: INK } } };
 
+/* ============================================================
+   TAREEKH KA HISAAB
+
+   Pehle naam UTC se banta tha (toISOString). Karachi UTC se 5 ghante
+   aage hai, is liye jo backup subah 5 baje se pehle chalta wo PICHLE
+   din ke naam se aata, aur jo baad mein chalta wo usi din ke naam se.
+   Do system ek hi raat chal kar do alag tareekhein dikhate thay.
+
+   Ab naam us din ka hai JIS KA DATA hai — yani chalne se ek din pehle.
+   Backup raat ko chalta hai, to us waqt tak pichla din poora ho chuka
+   hota hai. Aur email mein upar likh dete hain ke asal mein kab liya
+   gaya, taake koi shak na rahe — chahe padhne wala dunya mein kahin
+   bhi ho.
+   ============================================================ */
+
+function karachiParts() {
+  const f = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Karachi',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false
+  }).formatToParts(new Date());
+  const g = t => (f.find(x => x.type === t) || {}).value;
+  return { y: g('year'), m: g('month'), d: g('day'), hh: g('hour'), mm: g('minute') };
+}
+
+/* Jis din ka data hai — chalne wale din se ek din pehle */
+function dataDate() {
+  const p = karachiParts();
+  const d = new Date(Date.UTC(+p.y, +p.m - 1, +p.d));
+  d.setUTCDate(d.getUTCDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/* Backup asal mein kab liya gaya — Karachi ke waqt se */
+function takenAtText() {
+  const p = karachiParts();
+  const MON = ['January','February','March','April','May','June',
+               'July','August','September','October','November','December'];
+  return (+p.d) + ' ' + MON[+p.m - 1] + ' ' + p.y + ', ' + p.hh + ':' + p.mm + ' (Karachi)';
+}
+
 function fmt2(v) {
   var n = Number(v) || 0;
   return n.toLocaleString('en-PK', { maximumFractionDigits: 3 });
@@ -436,6 +477,8 @@ function buildRestoreJson(data) {
     format: 'qtc-restore',
     version: 1,
     taken_at: new Date().toISOString(),
+    taken_at_karachi: takenAtText(),
+    data_date: dataDate(),
     // Tarteeb ahem hai — restore isi tarteeb se daalta hai, taake
     // jis cheez par koi doosri cheez khadi hai wo pehle mojood ho.
     order: RESTORE_ORDER,
@@ -471,8 +514,10 @@ async function sendEmail(buffer, filename, jsonBuffer, jsonName) {
   await transporter.sendMail({
     from: process.env.GMAIL_USER,
     to: process.env.BACKUP_TO_EMAIL,
-    subject: 'QTC Daily Backup \u2014 ' + new Date().toISOString().slice(0, 10),
-    text: 'Aaj ka poora QTC data attached hai \u2014 accounting aur cutting dono.\n\n' +
+    subject: 'QTC Daily Backup \u2014 ' + dataDate(),
+    text: 'Backup liya gaya: ' + takenAtText() + '\n' +
+          'Data is tareekh tak ka: ' + dataDate() + '\n\n' +
+          'Poora QTC data attached hai \u2014 accounting aur cutting dono.\n\n' +
           'Do file hain:\n' +
           '\u2022 ' + filename + ' \u2014 padhne ke liye (Excel)\n' +
           '\u2022 ' + jsonName + ' \u2014 system wapas laane ke liye. Isay kholne ki zaroorat nahi, ' +
@@ -490,11 +535,12 @@ async function main() {
   await signIn();
   const data = await fetchAll();
   const buffer = await buildExcel(data);
-  const stamp = new Date().toISOString().slice(0, 10);
+  const stamp = dataDate();                    // jis din ka data hai
   const filename = 'QTC-Backup-' + stamp + '.xlsx';
   const jsonName = 'QTC-Restore-' + stamp + '.json';
   const jsonBuffer = buildRestoreJson(data);
   await sendEmail(buffer, filename, jsonBuffer, jsonName);
+  console.log('Liya gaya: ' + takenAtText() + ' | data ' + stamp);
   console.log('Backup emailed: ' + filename + ' + ' + jsonName +
               ' (' + Math.round(jsonBuffer.length / 1024) + ' KB)');
 }
