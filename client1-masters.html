@@ -5465,21 +5465,57 @@
         });
     } else {
       var isActive = $('uIsActive').checked;
+      var before = usersCache.filter(function (x) { return String(x.id) === String(editingUserId); })[0];
+      var nameChanged = !!(before && before.username !== username);
       $('usersFormSave').disabled = true; $('usersFormSave').textContent = 'Saving…';
-      sb.from('app_users').update({ username:username, is_admin:isAdmin, is_active:isActive, perms:perms })
-        .eq('id', editingUserId).then(function (res) {
-          $('usersFormSave').disabled = false; $('usersFormSave').textContent = 'Save';
-          if (res.error) {
-            showErr('usersErr', /duplicate|unique/i.test(res.error.message || '') ? 'Ye username pehle se mojood hai.'
-                                                                                    : (res.error.message || 'Could not save.'));
-            return;
-          }
-          toast('Update ho gaya');
-          showUsersList(); loadUsersList();
-        }).catch(function (e) {
-          $('usersFormSave').disabled = false; $('usersFormSave').textContent = 'Save';
-          showErr('usersErr', isNetErr(e) ? 'No internet.' : 'Could not save.');
-        });
+
+      /* Username do jagah rehta hai — app ki apni list mein, aur Supabase
+         ke login record mein. Login hamesha doosri jagah se hota hai.
+
+         Pehle yahan sirf app wali jagah badalti thi. Naam naya nazar aata
+         tha magar login purane naam se hi hota tha, aur naye naam par
+         "username and password did not match" aata — banda samajhta ke
+         password ghalat hai, halanke wo apne hi system se bahar ho chuka
+         hota.
+
+         auth.users ko browser se nahi badla ja sakta (us ke liye secret
+         key chahiye, jo kabhi browser mein nahi honi chahiye). Is liye
+         yeh kaam server par rename_app_user karti hai — dono jagah ek
+         saath, admin ki tasdeeq ke saath. */
+      var step = nameChanged
+        ? sb.rpc('rename_app_user', { p_id:editingUserId, p_new_username:username })
+            .then(function (r) { if (r.error) throw r.error; })
+        : Promise.resolve();
+
+      step.then(function () {
+        return sb.from('app_users').update({ is_admin:isAdmin, is_active:isActive, perms:perms })
+                 .eq('id', editingUserId);
+      }).then(function (res) {
+        $('usersFormSave').disabled = false; $('usersFormSave').textContent = 'Save';
+        if (res && res.error) {
+          showErr('usersErr', res.error.message || 'Could not save.');
+          return;
+        }
+        toast(nameChanged ? 'Update ho gaya — ab login "' + username + '" se hoga'
+                          : 'Update ho gaya');
+        showUsersList(); loadUsersList();
+      }).catch(function (e) {
+        $('usersFormSave').disabled = false; $('usersFormSave').textContent = 'Save';
+        var m = (e && (e.message || e.msg)) || '';
+        if (isNetErr(e)) { showErr('usersErr', 'No internet.'); return; }
+        // Function database mein hai hi nahi — 30 wali file reh gayi hai
+        if (/rename_app_user|PGRST202|could not find the function/i.test(m)) {
+          showErr('usersErr', 'Username badalne wala hissa database mein nahi hai. ' +
+                              'db/30_username_rename.sql chalayein — us ke baghair naam badla ' +
+                              'to login purane naam par atak jayega.');
+          return;
+        }
+        if (/pehle se kisi aur ka|duplicate|unique/i.test(m)) {
+          showErr('usersErr', 'Ye username pehle se kisi aur ka hai.');
+          return;
+        }
+        showErr('usersErr', m || 'Could not save.');
+      });
     }
   });
 

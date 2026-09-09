@@ -120,6 +120,7 @@ SQL Editor mein is tarteeb se:
 | 27 | `27_security_hardening.sql` | Bina login wale (`anon`) ke liye RPC band — **lazmi** |
 | 28 | `28_fresh_start.sql` | Wipe Test Data ab ginti bhi 1 par wapas laata hai |
 | 29 | `29_bulk_wipe.sql` | Bara data saaf karne ke liye — sirf zaroorat par chalayein |
+| 30 | `30_username_rename.sql` | Username badalna dono jagah — **lazmi** |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 
@@ -517,6 +518,49 @@ Saari 9 sequences par `1 (abhi shuru nahi hui)` aana chahiye.
 Agar `wipe_test_data(true)` chalai thi to firms bhi urh gayi hain. Bill
 banane se pehle kam se kam **ek firm** banana zaroori hai — Masters →
 Firms. Section 10 mein tafseel hai.
+
+---
+
+## Username badalna — ek zaroori baat
+
+Username **do jagah** rehta hai:
+
+| Jagah | Kya hai |
+|---|---|
+| `app_users.username` | App ki apni list (Masters → Users) |
+| `auth.users.email` | Supabase ka asal login record |
+
+**Login hamesha doosri jagah se hota hai.** App user ka likha hua naam le
+kar `<naam>@<authDomain>` bana kar bhejti hai.
+
+Pehle Masters → Users se naam badalne par sirf pehli jagah badalti thi.
+Nateeja: app mein naya naam nazar aata, magar login purane naam se hi
+hota — aur naye naam par *"username and password did not match"* aata.
+Banda samajhta ke password ghalat hai, halanke wo apne hi system se
+bahar ho chuka hota.
+
+`db/30_username_rename.sql` yeh theek kar deti hai — ab app server par
+`rename_app_user()` chalati hai jo dono jagah ek saath badalti hai.
+
+**Yeh file chalana lazmi hai.** Us ke baghair naam badalne par wahi
+purana masla wapas aa jayega (app saaf error dikha degi, magar naam
+badla nahi ja sakega).
+
+### Purane users ki jaanch
+
+Agar pehle kabhi kisi ka naam badla gaya ho:
+
+```sql
+select u.username as app_ka_naam,
+       split_part(au.email, '@', 1) as login_naam
+  from app_users u
+  join auth.users au on au.id = u.id
+ where u.username <> split_part(au.email, '@', 1);
+```
+
+Koi row aaye to us user ka login **`login_naam`** se hota hai, us naam se
+nahi jo app mein dikhta hai. Masters → Users se naam dobara save kar dein
+— ab dono jagah theek ho jayega.
 
 ---
 
