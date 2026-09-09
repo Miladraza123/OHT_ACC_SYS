@@ -698,14 +698,14 @@
     <div id="usersList" style="max-height:50vh;overflow:auto"></div>
     <div id="usersForm" style="display:none">
       <div class="err" id="usersErr" style="margin-bottom:8px"></div>
-      <div id="uidField">
-        <label style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--mute);text-transform:uppercase">Supabase User ID</label>
-        <input id="uNewId" placeholder="Dashboard se paste karein" style="width:100%;box-sizing:border-box;margin:6px 0 12px;
-          padding:9px 10px;border:1px solid var(--hair);border-radius:8px;font-size:13px">
-      </div>
       <label style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--mute);text-transform:uppercase">Username</label>
       <input id="uName" placeholder="e.g. ahmed" style="width:100%;box-sizing:border-box;margin:6px 0 12px;
         padding:9px 10px;border:1px solid var(--hair);border-radius:8px;font-size:14px">
+      <label id="uPassLabel" style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--mute);text-transform:uppercase">Password</label>
+      <input id="uPass" type="text" autocomplete="off" placeholder="kam se kam 6 harf"
+        style="width:100%;box-sizing:border-box;margin:6px 0 4px;
+        padding:9px 10px;border:1px solid var(--hair);border-radius:8px;font-size:14px">
+      <div id="uPassHint" style="font-size:11.5px;color:var(--mute);margin-bottom:12px;line-height:1.45"></div>
       <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;margin-bottom:10px">
         <input type="checkbox" id="uIsAdmin"> Admin (sab kuch access — checkboxes ki zaroorat nahi)
       </label>
@@ -5418,8 +5418,14 @@
     var u = id ? usersCache.filter(function (x) { return String(x.id) === String(id); })[0] : null;
     showErr('usersErr', '');
     $('usersTitle').textContent = u ? 'Edit user' : 'New user';
-    $('uidField').style.display = u ? 'none' : '';
-    $('uNewId').value = '';
+    /* Naya user: password lazmi hai — usi se us ka login banta hai.
+       Purana user: khali chhor dein to password waisa hi rehta hai. */
+    $('uPass').value = '';
+    $('uPass').placeholder = u ? 'khali chhorein to na badle' : 'kam se kam 6 harf';
+    $('uPassLabel').textContent = u ? 'Naya password (marzi)' : 'Password';
+    $('uPassHint').textContent = u
+      ? 'Sirf tab bharein jab password badalna ho. Badalne par us shakhs ke saare khule hue device band ho jayenge.'
+      : 'Yeh us ka login password hoga. Usay ja kar bata dein.';
     $('uName').value = u ? u.username : '';
     $('uIsAdmin').checked = u ? !!u.is_admin : false;
     setPermCheckboxes(u ? u.perms : {});
@@ -5435,6 +5441,23 @@
   $('usersClose').addEventListener('click', function () { $('usersModal').classList.remove('on'); });
   $('usersBtn').addEventListener('click', openUsersModal);
 
+  /* User wale kaam server ki function se hote hain. Wo function database
+     mein na ho (SQL file reh gayi ho) to Supabase sirf "function nahi
+     mili" kehta hai — jis se koi samajh nahi paata ke karna kya hai.
+     Yahan wo saaf likh dete hain. */
+  function userFnErr(e, fnName) {
+    var m = (e && (e.message || e.msg)) || '';
+    if (isNetErr(e)) return 'No internet.';
+    if (/PGRST202|could not find the function|does not exist/i.test(m)) {
+      return 'Yeh hissa database mein nahi hai (' + fnName + '). ' +
+             'db/30_username_rename.sql aur db/31_user_management.sql chalayein.';
+    }
+    if (/pehle se|duplicate|unique/i.test(m))  return 'Ye username pehle se mojood hai.';
+    if (/Sirf admin/i.test(m))                 return 'Yeh kaam sirf admin kar sakta hai.';
+    if (/6 harf/i.test(m))                     return 'Password kam se kam 6 harf ka rakhein.';
+    return m || 'Could not save.';
+  }
+
   $('usersFormSave').addEventListener('click', function () {
     var username = $('uName').value.trim().toLowerCase().replace(/\s+/g, '');
     if (!username) { showErr('usersErr', 'Username daalein.'); return; }
@@ -5445,23 +5468,29 @@
     });
     var isAdmin = $('uIsAdmin').checked;
 
+    var pass = $('uPass').value;
+
+    /* Naya user ab yahin ban jata hai — pehle Supabase ka dashboard khol
+       kar user banana parta tha, wahan se UUID copy kar ke yahan paste
+       karna parta tha. Client ke liye yeh har naye mulazim par takleef
+       thi, aur dashboard wo jagah hai jahan us ka koi kaam nahi.
+
+       Login browser se nahi banaya ja sakta (secret key chahiye, jo
+       kabhi browser mein nahi honi chahiye) — is liye create_app_user
+       server par yeh kaam karti hai, admin ki tasdeeq ke saath. */
     if (!editingUserId) {
-      var uid = $('uNewId').value.trim();
-      if (!uid) { showErr('usersErr', 'Supabase User ID daalein (Dashboard se copy karein).'); return; }
+      if (pass.length < 6) { showErr('usersErr', 'Password kam se kam 6 harf ka rakhein.'); return; }
       $('usersFormSave').disabled = true; $('usersFormSave').textContent = 'Saving…';
-      sb.from('app_users').insert({ id:uid, username:username, is_admin:isAdmin, is_active:true, perms:perms })
+      sb.rpc('create_app_user', { p_username:username, p_password:pass,
+                                  p_is_admin:isAdmin, p_perms:perms })
         .then(function (res) {
           $('usersFormSave').disabled = false; $('usersFormSave').textContent = 'Save';
-          if (res.error) {
-            showErr('usersErr', /duplicate|unique/i.test(res.error.message || '') ? 'Ye username ya ID pehle se mojood hai.'
-                                                                                    : (res.error.message || 'Could not save.'));
-            return;
-          }
-          toast('User ban gaya');
+          if (res.error) throw res.error;
+          toast('User ban gaya — login "' + username + '" se');
           showUsersList(); loadUsersList();
         }).catch(function (e) {
           $('usersFormSave').disabled = false; $('usersFormSave').textContent = 'Save';
-          showErr('usersErr', isNetErr(e) ? 'No internet.' : 'Could not save.');
+          showErr('usersErr', userFnErr(e, 'create_app_user'));
         });
     } else {
       var isActive = $('uIsActive').checked;
@@ -5482,12 +5511,22 @@
          key chahiye, jo kabhi browser mein nahi honi chahiye). Is liye
          yeh kaam server par rename_app_user karti hai — dono jagah ek
          saath, admin ki tasdeeq ke saath. */
+      if (pass && pass.length < 6) {
+        $('usersFormSave').disabled = false; $('usersFormSave').textContent = 'Save';
+        showErr('usersErr', 'Password kam se kam 6 harf ka rakhein.'); return;
+      }
+
       var step = nameChanged
         ? sb.rpc('rename_app_user', { p_id:editingUserId, p_new_username:username })
             .then(function (r) { if (r.error) throw r.error; })
         : Promise.resolve();
 
+      // Password sirf tab jab admin ne kuch likha ho
       step.then(function () {
+        if (!pass) return;
+        return sb.rpc('set_app_user_password', { p_id:editingUserId, p_password:pass })
+                 .then(function (r) { if (r.error) throw r.error; });
+      }).then(function () {
         return sb.from('app_users').update({ is_admin:isAdmin, is_active:isActive, perms:perms })
                  .eq('id', editingUserId);
       }).then(function (res) {
@@ -5496,25 +5535,14 @@
           showErr('usersErr', res.error.message || 'Could not save.');
           return;
         }
-        toast(nameChanged ? 'Update ho gaya — ab login "' + username + '" se hoga'
-                          : 'Update ho gaya');
+        var msg = 'Update ho gaya';
+        if (nameChanged) msg += ' — ab login "' + username + '" se hoga';
+        if (pass) msg += (nameChanged ? ', aur password bhi badal gaya' : ' — password badal gaya');
+        toast(msg);
         showUsersList(); loadUsersList();
       }).catch(function (e) {
         $('usersFormSave').disabled = false; $('usersFormSave').textContent = 'Save';
-        var m = (e && (e.message || e.msg)) || '';
-        if (isNetErr(e)) { showErr('usersErr', 'No internet.'); return; }
-        // Function database mein hai hi nahi — 30 wali file reh gayi hai
-        if (/rename_app_user|PGRST202|could not find the function/i.test(m)) {
-          showErr('usersErr', 'Username badalne wala hissa database mein nahi hai. ' +
-                              'db/30_username_rename.sql chalayein — us ke baghair naam badla ' +
-                              'to login purane naam par atak jayega.');
-          return;
-        }
-        if (/pehle se kisi aur ka|duplicate|unique/i.test(m)) {
-          showErr('usersErr', 'Ye username pehle se kisi aur ka hai.');
-          return;
-        }
-        showErr('usersErr', m || 'Could not save.');
+        showErr('usersErr', userFnErr(e, 'rename_app_user / set_app_user_password'));
       });
     }
   });
