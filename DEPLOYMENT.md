@@ -119,6 +119,7 @@ SQL Editor mein is tarteeb se:
 | 26 | `26_sync_with_live.sql` | `item_units`, 14 columns, 4 functions, 6 triggers — sab zaroori |
 | 27 | `27_security_hardening.sql` | Bina login wale (`anon`) ke liye RPC band — **lazmi** |
 | 28 | `28_fresh_start.sql` | Wipe Test Data ab ginti bhi 1 par wapas laata hai |
+| 29 | `29_bulk_wipe.sql` | Bara data saaf karne ke liye — sirf zaroorat par chalayein |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 
@@ -482,6 +483,18 @@ items aur firms bhi.
 **Kya bachta hai:** users aur unki permissions, warehouses, party
 categories, machines, operators, service categories, aur app settings
 (prefix, currency, financial year).
+
+### Agar "No internet — wipe not saved" aaye
+
+Yeh asal mein internet ka masla nahi. Supabase `authenticated` role par
+**8 second ka statement timeout** lagata hai. DELETE har row par saare
+triggers chalati hai (costing, coil balance, audit log) — hazaron rows
+par yeh kai minute ka kaam hai, aur 8 second mein kabhi mukammal nahi
+hota. App timeout ko "internet nahi hai" samajh leti hai.
+
+Us waqt SQL Editor se **`db/29_bulk_wipe.sql`** chalayein. Wo TRUNCATE
+istemaal karti hai — row triggers chalate hi nahi, is liye foran ho jata
+hai, aur SQL Editor par 8 second wali hadd bhi nahi lagti.
 
 **Ginti wapas 1 par:** file 28 chalne ke baad `wipe_test_data()` khud
 saari 9 sequences reset kar deti hai — bill, material inward, cutting
