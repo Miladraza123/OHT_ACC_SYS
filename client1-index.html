@@ -107,6 +107,11 @@
   <div class="box">
     <h4>Sign out?</h4>
     <p>You will need your email and password to get back in. This signs you out of every screen.</p>
+    <label id="askCheckWrap" style="display:flex;align-items:center;gap:8px;font-size:13px;
+      margin:2px 0 12px;line-height:1.4;opacity:.85">
+      <input type="checkbox" id="askCheck" style="flex:none">
+      <span>Is device par mehfooz data bhi mita dein (bina bheji hui entries samet)</span>
+    </label>
     <div class="acts">
       <button class="btn" id="askNo">Cancel</button>
       <button class="btn dgr" id="askYes">Sign out</button>
@@ -320,8 +325,28 @@
   $('rl').addEventListener('click', reloadAll);
   $('out').addEventListener('click', function () { $('ask').classList.add('on'); });
   $('askNo').addEventListener('click', function () { $('ask').classList.remove('on'); });
+  /* Is device par mehfooz data mitana — offline queue, cache, aur Daily
+     Ledger ki sheets. Supabase ka connection (cfg) rehne dete hain,
+     taake agla banda seedha login kar sake.
+
+     Yeh shell ka sign out saare screens ko band karta hai, is liye
+     safai bhi yahin sab ke liye ek saath ho jati hai — chaaron apps ek
+     hi localStorage istemaal karti hain. */
+  function clearDeviceData() {
+    var keep = APP.key('cfg'), prefix = window.APP_CONFIG.storeKey + '-';
+    try {
+      Object.keys(window.localStorage).forEach(function (k) {
+        if (k === keep) return;
+        if (k.indexOf(prefix) === 0 || k === 'ledger-app-pk') {
+          window.localStorage.removeItem(k);
+        }
+      });
+    } catch (e) {}
+  }
+
   $('askYes').addEventListener('click', function () {
     $('askYes').disabled = true; $('askYes').textContent = 'Signing out…';
+    if ($('askCheck').checked) clearDeviceData();
     var raw = store(APP.key('cfg')), done = function () { location.reload(); };
     if (!raw) { done(); return; }
     var cfg; try { cfg = JSON.parse(raw); } catch (e) { cfg = null; }
