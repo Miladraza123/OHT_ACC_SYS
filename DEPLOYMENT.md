@@ -598,6 +598,33 @@ nahi jo app mein dikhta hai. Masters → Users se naam dobara save kar dein
 
 ---
 
+## Is device ka data mitana
+
+App offline bhi chalti hai, is liye kaafi kuch browser mein bhi rehta
+hai — bina bheji hui entries, cache, aur Daily Ledger ki sheets.
+
+Sign out ise jaan boojh kar **nahi** mitata: agla banda aksar wohi hota
+hai, aur offline kaam bacha rehna chahiye. Is liye Sign out ke dialog
+mein ab ek checkbox hai:
+
+> ☐ Is device par mehfooz data bhi mita dein
+
+**Kab tick karein:**
+
+- **Server par se data saaf kiya gaya ho.** Warna is device ki purani
+  copy phir se upar chali jayegi — jaise hi koi purani entry chhoo le.
+  Yeh asal khatra hai: server khali hota hai magar phone par purana
+  data pada rehta hai.
+- **Phone kisi aur ko dena ho.**
+
+Supabase ka connection (URL aur key) nahi mitta, taake agla banda seedha
+login kar sake.
+
+⚠️ **Bina bheji hui entries bhi chali jayengi.** Pehle dekh lein ke
+"Offline" ya "Syncing" to nahi likha — pehle sab upload ho jane dein.
+
+---
+
 ## Backup aur Restore
 
 ### Roz ka backup

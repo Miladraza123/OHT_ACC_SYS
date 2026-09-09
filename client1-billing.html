@@ -422,6 +422,10 @@
 <div class="ask" id="ask">
   <div class="box">
     <h4 id="askTitle"></h4><p id="askBody"></p>
+    <label id="askCheckWrap" style="display:none;align-items:center;gap:8px;font-size:13px;
+      margin:2px 0 12px;color:var(--slate);line-height:1.4">
+      <input type="checkbox" id="askCheck" style="flex:none"> <span id="askCheckLabel"></span>
+    </label>
     <div class="acts"><button class="btn" id="askNo">Cancel</button><button class="btn dgr" id="askYes">Delete</button></div>
   </div>
 </div>
@@ -444,6 +448,34 @@
   var $ = function (id) { return document.getElementById(id); };
   // Supabase connection ki key — storeKey se banti hai (jaise qtc-cfg)
   var CFG = window.APP_CONFIG.key('cfg');
+
+  /* ---------- Is device par mehfooz data mitana ----------
+     App offline bhi chalti hai, is liye kaafi kuch browser mein bhi
+     rehta hai — bina bheji hui entries (offline queue), cache, aur
+     Daily Ledger ki sheets.
+
+     Sign out ise jaan boojh kar nahi mitata (agla banda wahi hota hai,
+     aur offline kaam bacha rehna chahiye). Magar do haalat mein mitana
+     zaroori hai:
+
+       * Server par se data saaf kiya gaya ho — warna is device ki
+         purani copy phir se upar chali jayegi jaise hi koi purani
+         entry chhoo le
+       * Phone kisi aur ko dena ho
+
+     Supabase ka connection (URL aur key) nahi mitate, taake agla banda
+     seedha login kar sake. */
+  function clearDeviceData() {
+    var prefix = window.APP_CONFIG.storeKey + '-';
+    try {
+      Object.keys(window.localStorage).forEach(function (k) {
+        if (k === CFG) return;                                   // connection rehne do
+        if (k.indexOf(prefix) === 0 || k === 'ledger-app-pk') {
+          window.localStorage.removeItem(k);
+        }
+      });
+    } catch (e) {}
+  }
   var store = {
     get: function (k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
     set: function (k, v) { try { localStorage.setItem(k, v); } catch (e) {} },
@@ -587,11 +619,18 @@
     clearTimeout(syncT);
     if (msg && col === '#7DC9A9') syncT = setTimeout(function () { el.textContent = ''; }, 2200);
   }
-  function confirmBox(title, body, yes) {
+  function confirmBox(title, body, yes, checkLabel) {
     return new Promise(function (res) {
       $('askTitle').textContent = title; $('askBody').textContent = body;
+      $('askCheck').checked = false;
+      $('askCheckLabel').textContent = checkLabel || '';
+      $('askCheckWrap').style.display = checkLabel ? 'flex' : 'none';
       $('askYes').textContent = yes || 'Delete'; $('ask').classList.add('on');
-      function done(v) { $('ask').classList.remove('on'); $('askYes').onclick = null; $('askNo').onclick = null; res(v); }
+      function done(v) {
+        var checked = $('askCheck').checked;
+        $('askCheckWrap').style.display = 'none'; $('ask').classList.remove('on');
+        $('askYes').onclick = null; $('askNo').onclick = null;
+        res(checkLabel ? { ok:v, checked:checked } : v); }
       $('askYes').onclick = function () { done(true); };
       $('askNo').onclick  = function () { done(false); };
     });
@@ -3222,8 +3261,13 @@
     store.del(CFG); $('gateLogin').classList.remove('on'); $('gateConnect').classList.add('on');
   });
   $('outBtn').addEventListener('click', function () {
-    confirmBox('Sign out?', 'You will need your email and password to get back in.', 'Sign out')
-      .then(function (ok) { if (ok) sb.auth.signOut().then(function () { location.reload(); }); });
+    confirmBox('Sign out?', 'You will need your email and password to get back in.', 'Sign out',
+               'Is device par mehfooz data bhi mita dein (bina bheji hui entries samet)')
+      .then(function (r) {
+        if (!r.ok) return;
+        if (r.checked) clearDeviceData();
+        sb.auth.signOut().then(function () { location.reload(); });
+      });
   });
 
   function afterConnect(attempt) {
