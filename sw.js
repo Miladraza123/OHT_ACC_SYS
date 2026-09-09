@@ -7,7 +7,7 @@
    nahi. Version badhane ke liye sirf CACHE_VERSION number badlein.
    ═══════════════════════════════════════════════════════════════ */
 
-var CACHE_VERSION = 'oht-qtc-v5';
+var CACHE_VERSION = 'oht-qtc-v6';
 
 var SHELL_FILES = [
   './',

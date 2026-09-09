@@ -108,6 +108,11 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | 5.7 | Admin se us user ko **band** (inactive) karein | Us ka login foran band |
 | 5.8 | Us user ka **naam badlein** → naye naam se login | Chal jata hai |
 | 5.9 | Us ka **password badlein** → naye se login | Chal jata hai, purana nahi |
+| 5.10 | Sidebar → **Change Password** — mojooda ghalat daalein | "Mojooda password ghalat hai" |
+| 5.11 | Dono naye password alag daalein | "Dono aik jaise nahi hain" |
+| 5.12 | Sahi bharein → Save | "Password badal diya gaya" |
+| 5.13 | Sign out → **naye** password se login | Chal jata hai |
+| 5.14 | Wahi, **purane** password se login | Nahi chalta |
 
 ---
 
@@ -148,6 +153,7 @@ wo kaam kar lega jo usay nahi karna chahiye.
 - [ ] Section 2 ke saare hisaab theek — Trial Balance barabar
 - [ ] Har number 1 se shuru hua (S-0001, P-0001, MI-0001, CJ-0001…)
 - [ ] Permissions asal mein rokti hain, sirf button chhupati nahi
+- [ ] Change Password ke baad purana password waqai nahi chalta
 - [ ] Backup email aa rahi hai, dono file saath
 - [ ] Test ka saara data phir se saaf (`db/29_bulk_wipe.sql`)
 - [ ] Ginti dobara 1 par
@@ -165,3 +171,4 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | Restore beech mein ruk gaya | Period lock — natija screen par wajah likhi aati hai |
 | Backup email nahi aayi | GitHub → Actions → laal run → log dekhein |
 | "permission denied for function" | `db/27_security_hardening.sql` reh gaya hai |
+| Change Password par "yeh hissa database mein nahi hai" | `db/32_change_own_password.sql` reh gaya hai |

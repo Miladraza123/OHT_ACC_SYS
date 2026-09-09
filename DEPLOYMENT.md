@@ -122,6 +122,7 @@ SQL Editor mein is tarteeb se:
 | 29 | `29_bulk_wipe.sql` | Bara data saaf karne ke liye — sirf zaroorat par chalayein |
 | 30 | `30_username_rename.sql` | Username badalna dono jagah — **lazmi** |
 | 31 | `31_user_management.sql` | User banana aur password badalna app se — **lazmi** |
+| 32 | `32_change_own_password.sql` | Apna password khud badalna (sidebar) — **lazmi** |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 
@@ -532,7 +533,8 @@ Firms. Section 10 mein tafseel hai.
 
 ## Users banana aur password badalna
 
-`db/31_user_management.sql` ke baad yeh sab **app se** hota hai:
+`db/31_user_management.sql` aur `db/32_change_own_password.sql` ke baad
+yeh sab **app se** hota hai:
 
 **Naya user:** Masters → Users → **+ New User** → username, password,
 permissions → Save. Login foran chalu.
@@ -540,6 +542,19 @@ permissions → Save. Login foran chalu.
 **Password bhool gaya:** Masters → Users → us user par **Edit** →
 "Naya password" bharein → Save. Purana password janne ki zaroorat nahi.
 Password badalte hi us shakhs ke saare khule hue device band ho jate hain.
+
+**Apna password khud badalna:** sidebar → **Change Password** → mojooda
+password, phir naya (do dafa) → Save. Yeh har user khud kar sakta hai,
+admin hone ki zaroorat nahi. Baaqi devices apne aap sign out ho jati hain,
+jis device par kaam ho raha ho wo chalti rehti hai.
+
+> Pehle yahan Supabase ka apna `auth.updateUser()` chalta tha. Wo "theek
+> hai" keh deta tha magar password badalta hi nahi tha — banda samajhta ke
+> naya password lag gaya, aur agli dafa login purane hi password se hota.
+> Ab yeh kaam `db/32` ka `change_my_password()` karta hai, jo batata hai ke
+> row waqai badli ya nahi. "Ho gaya" tabhi likha jata hai jab server se
+> tasdeeq aaye. **`db/32` chalana lazmi hai** — us ke baghair sidebar wala
+> Change Password saaf error dikhayega (kaamyabi ka jhoota paighaam nahi).
 
 **Naam badalna:** Edit → username badlein → Save. Login ka naam bhi saath
 hi badal jata hai (`db/30` ki wajah se).
