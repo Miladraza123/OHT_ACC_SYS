@@ -605,7 +605,8 @@ hai — bina bheji hui entries, cache, aur Daily Ledger ki sheets.
 
 Sign out ise jaan boojh kar **nahi** mitata: agla banda aksar wohi hota
 hai, aur offline kaam bacha rehna chahiye. Is liye Sign out ke dialog
-mein ab ek checkbox hai:
+mein ab ek checkbox hai — **upar wale (shell ke) Sign out mein bhi, aur
+har app ke apne Sign out mein bhi**:
 
 > ☐ Is device par mehfooz data bhi mita dein
 
