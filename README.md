@@ -52,7 +52,7 @@ GitHub Pages (static hosting)
 ├── icons/                        PWA icons (aap ko khud daalne hain)
 ├── backup.js                     Roz ka backup — Excel + restore JSON, email par
 ├── .github/workflows/backup.yml  Roz subah 6 baje (Karachi) khud chalta hai
-└── db/                           SQL — 26 numbered files, tarteeb se chalayein
+└── db/                           SQL — 27 numbered files, tarteeb se chalayein
 ```
 
 ---
@@ -109,6 +109,13 @@ Har user ke `app_users.perms` (jsonb) mein 19 permissions hoti hain:
 Yeh sirf UI mein nahi rukti — **database level par lagti hain**, RLS
 policies aur `enforce_perm_on_update` trigger ke zariye. Yani agar koi
 API se seedha request bheje tab bhi permission check hoti hai.
+
+**Ek istisna:** `backup_restore` ki koi RLS policy nahi hai — wo sirf UI
+mein Backup ka button chhupati ya dikhati hai. Database is se koi faisla
+nahi karta. Amli tor par yeh mehfooz hai, kyunki Restore ka button sirf
+admin ko dikhta hai aur restore ka har likhne wala kaam apni table ki
+apni policy se guzarta hai (delete sirf admin kar sakta hai). Magar is
+key ko database ki hifazat na samjhein.
 
 `is_admin = true` wala user sab kuch kar sakta hai.
 

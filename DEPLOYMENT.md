@@ -117,6 +117,7 @@ SQL Editor mein is tarteeb se:
 | 24 | `24_final_wipe.sql` | Wipe Test Data ka aakhri version |
 | 25 | `25_app_settings.sql` | Company Setup: currency, financial year, voucher prefixes |
 | 26 | `26_sync_with_live.sql` | `item_units`, 14 columns, 4 functions, 6 triggers — sab zaroori |
+| 27 | `27_security_hardening.sql` | Bina login wale (`anon`) ke liye RPC band — **lazmi** |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 
@@ -406,6 +407,50 @@ Yeh sab chala kar dekh lein:
 
 **Test data saaf karein**
 - [ ] Masters → Wipe Test Data → sab test entries urhi?
+
+---
+
+## Security — ek cheez jo lazmi hai
+
+**`db/27_security_hardening.sql` chalana bhool na jayein.** Yeh sirf naye
+system ke liye nahi — **jo system pehle se chal raha hai us par bhi
+chalani hai.**
+
+Wajah: Postgres har nayi function par by default "PUBLIC" ko chalane ki
+ijazat de deta hai, aur Supabase mein PUBLIC ka matlab `anon` role bhi
+hai — yani wo shakhs bhi jis ne login hi nahi kiya. Publishable (anon)
+key koi raaz nahi hoti; wo har browser mein khuli parhi hai. Aam halat
+mein RLS usay rokti hai — magar `SECURITY DEFINER` wali function RLS ko
+nahi maanti.
+
+Nateeja: 14 aisi functions thin jinhein sirf publishable key se, bina
+login kiye chalaya ja sakta tha. Sab se buri `apply_merge` — us par na
+table ki koi list thi, na permission ka koi check. Us se koi bhi shakhs
+kisi bhi bill, party balance ya stock ko badal sakta tha.
+
+Yeh file wo raasta band kar deti hai. App par koi farq nahi parta,
+kyunki app har RPC login ke **baad** hi chalati hai.
+
+Chalane ke baad tasdeeq kar lein — teenon `false` aani chahiyen:
+
+```sql
+select
+  has_function_privilege('anon','public.apply_merge(text,uuid,jsonb)','execute')        as anon_apply_merge,
+  has_function_privilege('anon','public.smart_merge_update(text,uuid,jsonb,jsonb)','execute') as anon_smart_merge,
+  has_function_privilege('anon','public.wipe_test_data(boolean)','execute')             as anon_wipe;
+```
+
+Aur yeh dono `true` — warna app band ho jayegi:
+
+```sql
+select
+  has_function_privilege('authenticated','public.smart_merge_update(text,uuid,jsonb,jsonb)','execute') as app_merge,
+  has_function_privilege('authenticated','public.is_app_admin()','execute')             as app_admin_check;
+```
+
+Ek cheez Dashboard se karni hai: **Authentication → Providers → Email**
+mein "Leaked password protection" chalu kar dein. Is se Supabase naya
+password chura hue passwords ki list se milata hai. Yeh SQL se nahi hota.
 
 ---
 
