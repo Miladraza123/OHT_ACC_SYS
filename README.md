@@ -52,7 +52,7 @@ GitHub Pages (static hosting)
 ├── icons/                        PWA icons (aap ko khud daalne hain)
 ├── backup.js                     Roz ka backup — Excel + restore JSON, email par
 ├── .github/workflows/backup.yml  Roz subah 6 baje (Karachi) khud chalta hai
-└── db/                           SQL — 29 numbered files, tarteeb se chalayein
+└── db/                           SQL — 30 numbered files, tarteeb se chalayein
 ```
 
 ---
