@@ -99,13 +99,15 @@ wo kaam kar lega jo usay nahi karna chahiye.
 
 | # | Kaam | Theek hone ki nishani |
 |---|---|---|
-| 5.1 | Masters → Users → aam user banayein, sirf `bill_create` dein | Ban gaya |
+| 5.1 | Masters → Users → **+ New User** — naam, password, sirf `bill_create` | Ban gaya, dashboard jane ki zaroorat nahi |
 | 5.2 | Us user se login karein | Andar aa gaya |
 | 5.3 | Sidebar dekhein | Users, Backup, Wipe **nazar nahi aate** |
 | 5.4 | Bill banayein | Ban jata hai |
 | 5.5 | Bill **delete** karne ki koshish | Mana kar deta hai |
 | 5.6 | Party edit karne ki koshish | Mana kar deta hai |
 | 5.7 | Admin se us user ko **band** (inactive) karein | Us ka login foran band |
+| 5.8 | Us user ka **naam badlein** → naye naam se login | Chal jata hai |
+| 5.9 | Us ka **password badlein** → naye se login | Chal jata hai, purana nahi |
 
 ---
 

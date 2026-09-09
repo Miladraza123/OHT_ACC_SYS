@@ -121,6 +121,7 @@ SQL Editor mein is tarteeb se:
 | 28 | `28_fresh_start.sql` | Wipe Test Data ab ginti bhi 1 par wapas laata hai |
 | 29 | `29_bulk_wipe.sql` | Bara data saaf karne ke liye — sirf zaroorat par chalayein |
 | 30 | `30_username_rename.sql` | Username badalna dono jagah — **lazmi** |
+| 31 | `31_user_management.sql` | User banana aur password badalna app se — **lazmi** |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 
@@ -200,6 +201,14 @@ functions. Frontend seedha Supabase se baat karta hai.
 ---
 
 ## 8. Pehla Super Admin banayein
+
+**Yeh sirf EK dafa karna hai.** Baqi saare users app se hi ban jayenge —
+`db/31_user_management.sql` ke baad Masters → Users → **+ New User** mein
+naam aur password daal dein, bas. Supabase ka dashboard dobara kabhi
+kholna nahi paray ga.
+
+Magar pehla admin dashboard se hi banana hoga — kyunki app mein user
+banane ke liye pehle se kisi admin ka login hona zaroori hai.
 
 Yeh do hisson ka kaam hai: pehle Auth mein user, phir `app_users` mein
 uska record.
@@ -518,6 +527,31 @@ Saari 9 sequences par `1 (abhi shuru nahi hui)` aana chahiye.
 Agar `wipe_test_data(true)` chalai thi to firms bhi urh gayi hain. Bill
 banane se pehle kam se kam **ek firm** banana zaroori hai — Masters →
 Firms. Section 10 mein tafseel hai.
+
+---
+
+## Users banana aur password badalna
+
+`db/31_user_management.sql` ke baad yeh sab **app se** hota hai:
+
+**Naya user:** Masters → Users → **+ New User** → username, password,
+permissions → Save. Login foran chalu.
+
+**Password bhool gaya:** Masters → Users → us user par **Edit** →
+"Naya password" bharein → Save. Purana password janne ki zaroorat nahi.
+Password badalte hi us shakhs ke saare khule hue device band ho jate hain.
+
+**Naam badalna:** Edit → username badlein → Save. Login ka naam bhi saath
+hi badal jata hai (`db/30` ki wajah se).
+
+Yeh teenon kaam sirf **admin** kar sakta hai. Bina login wale ke liye
+server par bilkul band hain.
+
+> **Password kahan mehfooz hai:** app password ko bcrypt se hash kar ke
+> rakhti hai — bilkul waise jaise Supabase khud karta hai. Asal password
+> kahin save nahi hota, na hi kisi report ya backup mein aata hai. Isi
+> liye "password dikhao" jaisa koi option nahi hai — sirf naya rakha ja
+> sakta hai.
 
 ---
 
