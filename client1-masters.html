@@ -806,9 +806,20 @@
   <div class="box" style="max-width:380px">
     <h4>Change password</h4>
     <div class="err" id="pwErr" style="margin-bottom:8px"></div>
+
+    <label style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--mute);text-transform:uppercase">Current password</label>
+    <input id="pwOld" type="password" autocomplete="current-password" style="width:100%;box-sizing:border-box;margin:6px 0 12px;padding:9px 10px;border:1px solid var(--hair);border-radius:8px;font-size:14px">
+
     <label style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--mute);text-transform:uppercase">New password</label>
-    <input id="pwNew" type="password" style="width:100%;box-sizing:border-box;margin:6px 0 14px;
-      padding:9px 10px;border:1px solid var(--hair);border-radius:8px;font-size:14px">
+    <input id="pwNew" type="password" autocomplete="new-password" style="width:100%;box-sizing:border-box;margin:6px 0 12px;padding:9px 10px;border:1px solid var(--hair);border-radius:8px;font-size:14px">
+
+    <label style="font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--mute);text-transform:uppercase">New password again</label>
+    <input id="pwNew2" type="password" autocomplete="new-password" style="width:100%;box-sizing:border-box;margin:6px 0 12px;padding:9px 10px;border:1px solid var(--hair);border-radius:8px;font-size:14px">
+
+    <p style="margin:0 0 14px;font-size:12px;color:var(--mute)">
+      Save ke baad baaqi devices apne aap sign out ho jayengi. Yeh device chalta rahega.
+    </p>
+
     <div class="acts">
       <button class="btn" id="pwClose">Cancel</button>
       <button class="btn pri" id="pwSave">Save</button>
@@ -5357,23 +5368,51 @@
   });
 
   /* ---------- Change my own password ---------- */
+  function pwClear() { $('pwOld').value = ''; $('pwNew').value = ''; $('pwNew2').value = ''; }
+
   $('pwBtn').addEventListener('click', function () {
-    $('pwNew').value = ''; showErr('pwErr', '');
+    pwClear(); showErr('pwErr', '');
     $('pwModal').classList.add('on');
+    setTimeout(function () { try { $('pwOld').focus(); } catch (e) {} }, 60);
   });
-  $('pwClose').addEventListener('click', function () { $('pwModal').classList.remove('on'); });
+  $('pwClose').addEventListener('click', function () {
+    pwClear(); showErr('pwErr', '');
+    $('pwModal').classList.remove('on');
+  });
+
+  /* ZAROORI: password server par badalta hai (db/32 ka change_my_password).
+
+     Pehle yahan Supabase ka apna auth.updateUser() chalta tha. Us ka jawab
+     “theek hai” aa jata tha magar auth.users mein password badalta hi nahi
+     tha — yani app jhoot bolti thi. Banda samajhta ke naya password lag gaya,
+     aur agli dafa login purane hi password se hota.
+
+     Ab function batata hai ke row waqai badli ya nahi. “Ho gaya” tabhi likha
+     jata hai jab server se tasdeeq aaye. Saath hi mojooda password poochha
+     jata hai — khuli hui device par baith kar koi aur password na badal sake. */
   $('pwSave').addEventListener('click', function () {
-    var v = $('pwNew').value;
-    if (!v || v.length < 6) { showErr('pwErr', 'Password kam se kam 6 characters ka ho.'); return; }
+    var cur = $('pwOld').value, v = $('pwNew').value, v2 = $('pwNew2').value;
+    if (!cur)               { showErr('pwErr', 'Mojooda password daalein.'); return; }
+    if (!v || v.length < 6) { showErr('pwErr', 'Naya password kam se kam 6 characters ka ho.'); return; }
+    if (v !== v2)           { showErr('pwErr', 'Dono naye password aik jaise nahi hain.'); return; }
+    if (v === cur)          { showErr('pwErr', 'Naya password purane se mukhtalif hona chahiye.'); return; }
+    showErr('pwErr', '');
+
+    function done() { $('pwSave').disabled = false; $('pwSave').textContent = 'Save'; }
     $('pwSave').disabled = true; $('pwSave').textContent = 'Saving…';
-    sb.auth.updateUser({ password:v }).then(function (res) {
-      $('pwSave').disabled = false; $('pwSave').textContent = 'Save';
-      if (res.error) { showErr('pwErr', res.error.message || 'Could not update password.'); return; }
+
+    sb.rpc('change_my_password', { p_current:cur, p_new:v }).then(function (res) {
+      done();
+      if (res.error) throw res.error;
+      if (!res.data || res.data.status !== 'ok') {
+        showErr('pwErr', 'Password badla nahi — dobara koshish karein.'); return;
+      }
+      pwClear();
       $('pwModal').classList.remove('on');
-      toast('Password badal diya gaya');
+      toast('Password badal diya gaya — agli dafa isi se login karein');
     }).catch(function (e) {
-      $('pwSave').disabled = false; $('pwSave').textContent = 'Save';
-      showErr('pwErr', isNetErr(e) ? 'No internet.' : 'Could not update password.');
+      done();
+      showErr('pwErr', userFnErr(e, 'change_my_password'));
     });
   });
 
@@ -5489,10 +5528,14 @@
     if (isNetErr(e)) return 'No internet.';
     if (/PGRST202|could not find the function|does not exist/i.test(m)) {
       return 'Yeh hissa database mein nahi hai (' + fnName + '). ' +
-             'db/30_username_rename.sql aur db/31_user_management.sql chalayein.';
+             'db/30_username_rename.sql, db/31_user_management.sql aur\n' +
+             'db/32_change_own_password.sql chalayein.';
     }
     if (/pehle se|duplicate|unique/i.test(m))  return 'Ye username pehle se mojood hai.';
     if (/Sirf admin/i.test(m))                 return 'Yeh kaam sirf admin kar sakta hai.';
+    if (/Mojooda password ghalat/i.test(m))    return 'Mojooda password ghalat hai.';
+    if (/logged in nahi/i.test(m))             return 'Aap logged in nahi hain — dobara login karein.';
+    if (/mukhtalif hona chahiye/i.test(m))     return 'Naya password purane se mukhtalif hona chahiye.';
     if (/6 harf/i.test(m))                     return 'Password kam se kam 6 harf ka rakhein.';
     return m || 'Could not save.';
   }
