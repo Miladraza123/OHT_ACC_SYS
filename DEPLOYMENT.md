@@ -118,6 +118,7 @@ SQL Editor mein is tarteeb se:
 | 25 | `25_app_settings.sql` | Company Setup: currency, financial year, voucher prefixes |
 | 26 | `26_sync_with_live.sql` | `item_units`, 14 columns, 4 functions, 6 triggers — sab zaroori |
 | 27 | `27_security_hardening.sql` | Bina login wale (`anon`) ke liye RPC band — **lazmi** |
+| 28 | `28_fresh_start.sql` | Wipe Test Data ab ginti bhi 1 par wapas laata hai |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 
@@ -451,6 +452,58 @@ select
 Ek cheez Dashboard se karni hai: **Authentication → Providers → Email**
 mein "Leaked password protection" chalu kar dein. Is se Supabase naya
 password chura hue passwords ki list se milata hai. Yeh SQL se nahi hota.
+
+---
+
+## Client ko dene se pehle — system bilkul naya karna
+
+Test karte waqt jo data bana, wo client ko nahi jana chahiye. Aur ginti
+bhi dobara pehle number se shuru honi chahiye — nahi to client ka pehla
+bill `S-0009` jaisa koi number le ga aur beech mein khali jagah nazar
+aayegi.
+
+**Pehle backup:** Actions → Daily Backup → Run workflow. Email mein
+`QTC-Restore-<date>.json` aa jaye to usay mehfooz rakhein. **Yeh kaam
+wapas nahi hota.**
+
+Phir Masters → **Wipe Test Data** (sirf admin ko dikhta hai), ya SQL
+Editor mein:
+
+```sql
+select wipe_test_data(true);   -- parties, items, firms BHI urhengi
+select wipe_test_data(false);  -- masters bachengi, sirf transactions urhenge
+```
+
+**Kya urhta hai:** saare bills, quotations, PO, sales returns, daily
+ledger sheets, coils, cutting jobs, challans, material in/out, service
+invoices, stock conversions, aur activity log. `true` ke saath parties,
+items aur firms bhi.
+
+**Kya bachta hai:** users aur unki permissions, warehouses, party
+categories, machines, operators, service categories, aur app settings
+(prefix, currency, financial year).
+
+**Ginti wapas 1 par:** file 28 chalne ke baad `wipe_test_data()` khud
+saari 9 sequences reset kar deti hai — bill, material inward, cutting
+job, challan, material return, service invoice, conversion aur coil
+serial. Agla bill `S-0001` se shuru hoga.
+
+### Tasdeeq
+
+```sql
+select sequencename,
+       case when last_value is null then '1 (abhi shuru nahi hui)'
+            else (last_value + 1)::text end as agla_number
+  from pg_sequences where schemaname = 'public' order by sequencename;
+```
+
+Saari 9 sequences par `1 (abhi shuru nahi hui)` aana chahiye.
+
+### Saaf karne ke baad
+
+Agar `wipe_test_data(true)` chalai thi to firms bhi urh gayi hain. Bill
+banane se pehle kam se kam **ek firm** banana zaroori hai — Masters →
+Firms. Section 10 mein tafseel hai.
 
 ---
 
