@@ -127,3 +127,11 @@ purani entries ka `created_by` record mehfooz rahe.
 ## Deployment
 
 `DEPLOYMENT.md` dekhein — qadam ba qadam, is project ke mutabiq.
+
+---
+
+## Testing
+
+`TESTING.md` dekhein — client ko dene se pehle 45 minute ka checklist.
+Setup, kharid-bikri ka hisaab, cutting, daily ledger, permissions,
+backup/restore aur PWA — sab shamil.
