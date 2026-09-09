@@ -139,6 +139,7 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | 7.6 | Reports → **Aging** | Sahi buckets |
 | 7.7 | Masters → **Period Lock** lagayein | Purane bill band ho gaye |
 | 7.8 | Lock hata dein | Dobara khul gaye |
+| 7.9 | Sign out → ☑️ "Is device par mehfooz data bhi mita dein" | Dobara login par app bilkul khali, connection yaad hai |
 
 ---
 

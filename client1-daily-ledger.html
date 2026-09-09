@@ -559,6 +559,12 @@
 <div class="overlay" id="askOverlay">
   <div class="dialog" role="dialog" aria-modal="true" style="max-width:340px">
     <header><h3 id="askTitle">Confirm</h3><p id="askBody">Are you sure?</p></header>
+    <div style="padding:0 18px">
+      <label id="askCheckWrap" style="display:none;align-items:center;gap:8px;font-size:13px;
+        margin:0 0 6px;color:#5A6472;line-height:1.4">
+        <input type="checkbox" id="askCheck" style="flex:none"> <span id="askCheckLabel"></span>
+      </label>
+    </div>
     <footer>
       <button class="dbtn" id="askNo">Cancel</button>
       <button class="dbtn go" id="askYes" style="background:#9B2C2C;border-color:#9B2C2C">Delete</button>
@@ -769,6 +775,34 @@
   /* ─── cloud ─── */
   // Supabase connection ki key — storeKey se banti hai (jaise qtc-cfg)
   var CFG = window.APP_CONFIG.key('cfg');
+
+  /* ---------- Is device par mehfooz data mitana ----------
+     App offline bhi chalti hai, is liye kaafi kuch browser mein bhi
+     rehta hai — bina bheji hui entries (offline queue), cache, aur
+     Daily Ledger ki sheets.
+
+     Sign out ise jaan boojh kar nahi mitata (agla banda wahi hota hai,
+     aur offline kaam bacha rehna chahiye). Magar do haalat mein mitana
+     zaroori hai:
+
+       * Server par se data saaf kiya gaya ho — warna is device ki
+         purani copy phir se upar chali jayegi jaise hi koi purani
+         entry chhoo le
+       * Phone kisi aur ko dena ho
+
+     Supabase ka connection (URL aur key) nahi mitate, taake agla banda
+     seedha login kar sake. */
+  function clearDeviceData() {
+    var prefix = window.APP_CONFIG.storeKey + '-';
+    try {
+      Object.keys(window.localStorage).forEach(function (k) {
+        if (k === CFG) return;                                   // connection rehne do
+        if (k.indexOf(prefix) === 0 || k === 'ledger-app-pk') {
+          window.localStorage.removeItem(k);
+        }
+      });
+    } catch (e) {}
+  }
   var sb = null, pendingSync = {}, syncTimer = null, online = navigator.onLine;
 
   function syncNote(text, colour) {
@@ -1030,7 +1064,10 @@
   }, 120000);
   window.addEventListener('offline', function () { online = false; syncNote('Offline', '#B08A3E'); });
 
-  function ask(title, body, yesLabel, infoOnly) {
+  /* checkLabel diya jaye to ek checkbox bhi dikhta hai aur jawab
+     { ok:…, checked:… } ki shakl mein aata hai. Na diya jaye to sab
+     kuch bilkul pehle jaisa — sirf true/false. */
+  function ask(title, body, yesLabel, infoOnly, checkLabel) {
     return new Promise(function (resolve) {
       $('askTitle').textContent = title;
       $('askBody').textContent = body;
@@ -1038,11 +1075,16 @@
       $('askYes').style.background = infoOnly ? '#2A2620' : '#9B2C2C';
       $('askYes').style.borderColor = infoOnly ? '#2A2620' : '#9B2C2C';
       $('askNo').style.display = infoOnly ? 'none' : '';
+      $('askCheck').checked = false;
+      $('askCheckLabel').textContent = checkLabel || '';
+      $('askCheckWrap').style.display = checkLabel ? 'flex' : 'none';
       $('askOverlay').classList.add('open');
       function done(v) {
+        var checked = $('askCheck').checked;
         $('askOverlay').classList.remove('open');
+        $('askCheckWrap').style.display = 'none';
         $('askYes').onclick = null; $('askNo').onclick = null;
-        resolve(v);
+        resolve(checkLabel ? { ok:v, checked:checked } : v);
       }
       $('askYes').onclick = function () { done(true); };
       $('askNo').onclick = function () { done(false); };
@@ -2199,9 +2241,11 @@
 
   $('signOutBtn').addEventListener('click', function () {
     closeDrawer();
-    ask('Sign out?', 'Your sheets stay on this device and in the cloud.', 'Sign out')
-      .then(function (yes) {
-        if (!yes) return;
+    ask('Sign out?', 'Aap ki sheets is device par aur cloud par mehfooz rehti hain.', 'Sign out',
+        false, 'Is device ki sheets bhi mita dein (cloud par mehfooz rahengi)')
+      .then(function (r) {
+        if (!r.ok) return;
+        if (r.checked) { clearDeviceData(); if (sb) sb.auth.signOut().then(function () { location.reload(); }); return; }
         if (sb) sb.auth.signOut();
         showLogin();
       });
