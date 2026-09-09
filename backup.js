@@ -30,14 +30,28 @@ async function signIn() {
   if (res.error) throw new Error('Sign-in failed: ' + res.error.message);
 }
 
+/* Jo tables kisi wajah se na mil sakin, un ka record — email mein saaf
+   likh diya jata hai taake pata rahe ke file mein kya nahi hai. */
+const missed = [];
+
 async function fetchAll() {
   // Restore ke liye HAR table chahiye — warna file se system wapas nahi aata
-  const tables = RESTORE_ORDER;
   const out = {};
-  for (const t of tables) {
+  for (const t of RESTORE_ORDER) {
     const { data, error } = await sb.from(t).select('*');
-    if (error) throw new Error(t + ': ' + error.message);
+    /* Pehle yahan seedha throw tha. Ek table ka naam badal jata, ya us ki
+       RLS policy badal jati, to us raat ka backup POORA zaya ho jata —
+       adhoora nahi, bilkul nahi banta. Ab baqi tables file mein aa jati
+       hain aur nuqsan email mein likh diya jata hai. */
+    if (error) { missed.push(t + ' — ' + error.message); out[t] = []; continue; }
     out[t] = data || [];
+  }
+  /* Haan, agar ek bhi table na mile to yeh asal kharabi hai (login ya
+     connection) — us par backup rukna hi chahiye, taake khali file
+     purani sahi file ki jagah na le le. */
+  if (missed.length === RESTORE_ORDER.length) {
+    throw new Error('Ek bhi table nahi mili (' + missed.length + ') — login ya connection ka masla. ' +
+                    'Pehli ghalti: ' + missed[0]);
   }
   return out;
 }
@@ -473,6 +487,11 @@ async function buildExcel(data) {
    bilkul waisi jaisi database mein hai.
    ============================================================ */
 function buildRestoreJson(data) {
+  /* Har table mein kitni rows thin — file adhoori utri ho to isi se pata
+     chalta hai. Restore se pehle milaan kar lena aasan ho jata hai. */
+  const counts = {};
+  RESTORE_ORDER.forEach(function (t) { counts[t] = (data[t] || []).length; });
+
   return Buffer.from(JSON.stringify({
     format: 'qtc-restore',
     version: 1,
@@ -482,6 +501,9 @@ function buildRestoreJson(data) {
     // Tarteeb ahem hai — restore isi tarteeb se daalta hai, taake
     // jis cheez par koi doosri cheez khadi hai wo pehle mojood ho.
     order: RESTORE_ORDER,
+    // Jo tables na mil sakin (khali list ka matlab: sab kuch aa gaya)
+    missed: missed,
+    counts: counts,
     tables: data
   }), 'utf8');
 }
@@ -514,9 +536,15 @@ async function sendEmail(buffer, filename, jsonBuffer, jsonName) {
   await transporter.sendMail({
     from: process.env.GMAIL_USER,
     to: process.env.BACKUP_TO_EMAIL,
-    subject: 'QTC Daily Backup \u2014 ' + dataDate(),
+    subject: (missed.length ? '\u26a0 ADHOORA \u2014 ' : '') + 'QTC Daily Backup \u2014 ' + dataDate(),
     text: 'Backup liya gaya: ' + takenAtText() + '\n' +
           'Data is tareekh tak ka: ' + dataDate() + '\n\n' +
+          (missed.length
+            ? '\u26a0 DHYAN DEIN \u2014 ' + missed.length + ' table is file mein NAHI aa saki:\n' +
+              missed.map(function (m) { return '   \u2022 ' + m; }).join('\n') + '\n\n' +
+              'Baqi sab data file mein mehfooz hai. Ooper likhi tables ka data is file\n' +
+              'se wapas NAHI aayega. Ye masla jald hal karwa lein.\n\n'
+            : '') +
           'Poora QTC data attached hai \u2014 accounting aur cutting dono.\n\n' +
           'Do file hain:\n' +
           '\u2022 ' + filename + ' \u2014 padhne ke liye (Excel)\n' +
@@ -543,6 +571,13 @@ async function main() {
   console.log('Liya gaya: ' + takenAtText() + ' | data ' + stamp);
   console.log('Backup emailed: ' + filename + ' + ' + jsonName +
               ' (' + Math.round(jsonBuffer.length / 1024) + ' KB)');
+  if (missed.length) {
+    console.warn('DHYAN DEIN — ' + missed.length + ' table nahi mil saki:');
+    missed.forEach(function (m) { console.warn('  • ' + m); });
+    /* Workflow ko laal kar dete hain. Email to chali gayi hai (adhoori hi
+       sahi), magar GitHub par bhi nazar aana chahiye ke kuch theek nahi. */
+    process.exitCode = 1;
+  }
 }
 
 main().catch(function (e) {

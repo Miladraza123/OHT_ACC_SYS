@@ -50,7 +50,9 @@ GitHub Pages (static hosting)
 ├── manifest.json                 PWA manifest
 ├── sw.js                         Service worker (offline shell cache)
 ├── icons/                        PWA icons (aap ko khud daalne hain)
-└── db/                           SQL — 11 numbered files, tarteeb se chalayein
+├── backup.js                     Roz ka backup — Excel + restore JSON, email par
+├── .github/workflows/backup.yml  Roz subah 6 baje (Karachi) khud chalta hai
+└── db/                           SQL — 26 numbered files, tarteeb se chalayein
 ```
 
 ---

@@ -58,11 +58,6 @@ create table if not exists coils (
   finished_weight       numeric     not null default 0,   -- jobs se bana hua maal
   delivered_weight      numeric     not null default 0,   -- challan se gaya
 
-  raw_balance numeric generated always as
-    (received_weight - consumed_weight - returned_weight - closing_adjust_weight) stored,
-  pending_delivery numeric generated always as
-    (finished_weight - delivered_weight) stored,
-
   status            text        not null default 'active', -- active | closed | cancelled
   closed_at         timestamptz,
   closed_by         uuid,
@@ -75,7 +70,25 @@ create table if not exists coils (
   created_by  uuid,
   updated_at  timestamptz,
   updated_by  uuid,
-  deleted_at  timestamptz
+  deleted_at  timestamptz,
+
+  /* Teen balance jo database khud nikalta hai — inhein koi likhta nahi.
+     Yeh status ke baad aati hain kyunki raw_balance status ko dekhti hai.
+
+     raw_balance      — bina kata maal. Coil band kar dein to sifar ho jata
+                        hai: jo bacha tha wo closing adjustment mein ginn
+                        liya gaya, ab wo "para hua maal" nahi raha.
+                        (closing_adjust_weight yahan MINUS nahi hoti —
+                        warna band coil dohri kat jati.)
+     pending_delivery — tayyar maal jo abhi challan par nahi gaya.
+     physical_balance — party ka kitna maal ab bhi hamare paas hai. */
+  raw_balance numeric generated always as (
+    case when status = 'closed' then 0::numeric
+         else received_weight - consumed_weight - returned_weight end) stored,
+  pending_delivery numeric generated always as
+    (finished_weight - delivered_weight) stored,
+  physical_balance numeric generated always as
+    (received_weight - delivered_weight - returned_weight - closing_adjust_weight) stored
 );
 
 -- ---------- Cutting Job ----------
