@@ -4446,27 +4446,106 @@
     if ($('rsConfirm').value.trim().toUpperCase() !== 'RESTORE') {
       toast('Confirm karne ke liye RESTORE likhein', true); return;
     }
-    var btn = this; btn.disabled = true; btn.textContent = 'Restore ho raha hai\u2026';
+    /* Restore poora system badal deta hai. Button pehle hi sirf admin ko
+       dikhta hai, magar yahan dobara dekh lete hain — kyunki delete ki
+       ijazat sirf admin ke paas hai, aur bina us ke "replace" chup-chaap
+       adhoora reh jata. */
+    if (!(me && me.isAdmin)) {
+      toast('Restore sirf admin kar sakta hai', true); return;
+    }
+    var btn = this; btn.disabled = true; btn.textContent = 'Restore ho raha hai…';
     // Pehle abhi ka data utaar lo — wapas laut'ne ka raasta khula rahe
     downloadSafetyBackup().then(function () {
       return runRestore(rsData, $('rsMode').value);
-    }).then(function (done) {
+    }).then(function (res) {
+      toast(res.done + ' rows daali gayin. Costing dobara chal rahi hai…');
+      return sb.rpc('recompute_all_item_costs', { lock_date:null }).then(function (r) {
+        if (r && r.error) res.failed.push({ table:'costing recompute', msg:r.error.message });
+        return res;
+      });
+    }).then(function (res) {
       btn.disabled = false; btn.textContent = 'Restore';
-      $('restoreModal').classList.remove('on');
-      toast('Restore mukammal \u2014 ' + done + ' rows. Costing dobara chal rahi hai\u2026');
-      return sb.rpc('recompute_all_item_costs', { lock_date:null });
-    }).then(function () {
       loadAll();
-      toast('Sab kuch wapas aa gaya');
+      /* Modal khula rehta hai — admin ko dikhna chahiye ke kya hua.
+         Pehle yeh band ho jata tha aur "sab wapas aa gaya" keh deta tha,
+         chahe beech mein koi table fail hui ho. */
+      drawRestoreResult(res);
+      if (res.failed.length) toast(res.failed.length + ' jagah masla aaya — tafseel dekhein', true);
+      else toast('Restore mukammal');
     }).catch(function (e) {
       btn.disabled = false; btn.textContent = 'Restore';
       sayErr(e, 'restore');
     });
   });
 
+  /* Restore ke baad kya hua — saaf saaf. Agar koi table fail hui to wo
+     yahan naam se aati hai, taake admin ko pata ho ke kya adhoora hai. */
+  function drawRestoreResult(res) {
+    var html = '<div class="grp">Natija</div>';
+    if (res.failed.length) {
+      html += '<div class="f bad"><div class="hint"><b>' + res.done + ' rows daali gayin, magar ' +
+              res.failed.length + ' jagah masla aaya.</b> Jo neeche likhi hain un ka data poora ' +
+              'nahi aaya. Restore se pehle wali file (QTC-Before-Restore) aap ke paas mehfooz hai.' +
+              '</div></div>' +
+        '<table class="ltab"><thead><tr><th>Table</th><th>Masla</th></tr></thead><tbody>' +
+        res.failed.map(function (f) {
+          return '<tr><td>' + esc(f.table) + '</td><td class="neg">' + esc(f.msg) + '</td></tr>';
+        }).join('') + '</tbody></table>';
+    } else {
+      html += '<div class="f"><div class="hint"><b>Sab theek raha — ' + res.done +
+              ' rows wapas aa gayin.</b> Costing dobara chal chuki hai.</div></div>';
+    }
+    if (res.lockNote) {
+      html += '<div class="f"><div class="hint">' + esc(res.lockNote) + '</div></div>';
+    }
+    if (res.seqSql) {
+      html += '<div class="grp">Numbering</div>' +
+        '<div class="f"><div class="hint">Yeh sirf us waqt zaroori hai jab restore kisi ' +
+        '<b>naye ya khaali</b> database par kiya ho. Backup file mein ginti ki halat nahi hoti, ' +
+        'is liye naye database par agla bill dobara pehle number se shuru ho jata hai. ' +
+        'Neeche wali SQL ek dafa Supabase ke SQL Editor mein chala dein — ginti wahin se ' +
+        'aage chal paray gi jahan chhori thi.</div>' +
+        '<textarea readonly rows="' + Math.min(11, res.seqSql.split('\n').length + 1) + '" ' +
+        'onclick="this.select()" ' +
+        'style="width:100%;margin-top:6px;font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;' +
+        'font-size:11.5px;line-height:1.5;border:1px solid var(--hair);border-radius:8px;padding:8px;' +
+        'background:var(--panel);color:var(--ink);resize:vertical">' + esc(res.seqSql) + '</textarea></div>';
+    }
+    $('rsPlan').innerHTML = html;
+    $('rsConfirmBox').style.display = 'none';
+    $('rsGo').style.display = 'none';
+  }
+
+  /* Poori table list. Safety backup pehle aane wali file ke "order" par
+     chalta tha — yani purani file ho to nayi tables ka data utre baghair
+     reh jata. Ab apni list par chalta hai, aur file mein koi aur table ho
+     to wo bhi saath jur jati hai. */
+  var ALL_TABLES = [
+    'app_settings', 'cutting_settings', 'period_lock',
+    'warehouses', 'companies', 'parties', 'party_kinds', 'items', 'item_units',
+    'machines', 'operators', 'service_categories',
+    'vouchers', 'voucher_lines',
+    'sales_returns', 'sales_return_lines',
+    'quotations', 'quotation_lines',
+    'purchase_orders', 'po_lines',
+    'stock_transfers', 'stock_transfer_lines', 'stock_adjustments',
+    'sheets',
+    'material_inwards', 'coils',
+    'cutting_jobs', 'cutting_job_inputs', 'cutting_job_outputs',
+    'delivery_challans', 'delivery_challan_lines',
+    'material_returns', 'material_return_lines',
+    'service_invoices', 'service_invoice_lines',
+    'service_invoice_jobs', 'service_invoice_challans',
+    'stock_conversions', 'stock_conversion_inputs', 'stock_conversion_outputs',
+    'party_opening_balances'
+  ];
+
   /* Restore se pehle abhi ka poora data utaar do */
   function downloadSafetyBackup() {
-    var order = (rsData && rsData.order) || [];
+    var order = ALL_TABLES.slice();
+    ((rsData && rsData.order) || []).forEach(function (t) {
+      if (order.indexOf(t) === -1) order.push(t);
+    });
     return Promise.all(order.map(function (t) {
       return sb.from(t).select('*').then(function (r) {
         return { t:t, rows:r.error ? [] : (r.data || []) };
@@ -4486,49 +4565,189 @@
     });
   }
 
-  /* Asal kaam. Tarteeb ahem hai — pehle wo cheezein jin par baqi khadi
-     hain. Urhana ulti tarteeb mein, warna foreign key rok deti hai. */
-  function runRestore(j, mode) {
-    var order = j.order, done = 0;
-    var chain = Promise.resolve();
+  /* app_settings aur cutting_settings mein ek hi row hoti hai (id = 1) aur
+     un par INSERT ki koi RLS policy nahi — sirf UPDATE ho sakti hai. Is
+     liye inhein upsert se nahi, update se wapas laate hain. */
+  var SETTINGS_TABLES = ['app_settings', 'cutting_settings'];
 
+  /* Jo file mein nahi, sirf wo urhao. Pehle mojooda id le kar farq nikalte
+     hain, phir 100-100 ki qist mein delete. Pehle saari id ek hi request
+     ke URL mein chali jati thin — kuch hazaar rows par wo had se bahar
+     nikal jata aur request hi nakaam ho jati. */
+  function deleteNotIn(t, keep) {
+    var keepSet = {};
+    keep.forEach(function (id) { keepSet[String(id)] = 1; });
+    return sb.from(t).select('id').then(function (r) {
+      if (r.error) throw new Error(r.error.message);
+      var kill = (r.data || []).map(function (x) { return x.id; })
+                   .filter(function (id) { return !keepSet[String(id)]; });
+      var p = Promise.resolve();
+      for (var i = 0; i < kill.length; i += 100) {
+        (function (part) {
+          p = p.then(function () {
+            return sb.from(t).delete().in('id', part).then(function (d) {
+              if (d.error) throw new Error(d.error.message);
+            });
+          });
+        })(kill.slice(i, i + 100));
+      }
+      return p;
+    });
+  }
+
+  /* Ek table ka data 200 ki qist mein. Ek qist fail ho jaye to us table ko
+     wahin chhor dete hain — baqi tables phir bhi chalti rahengi. */
+  function putRows(t, rows, mode, res) {
+    var parts = [];
+    for (var i = 0; i < rows.length; i += 200) parts.push(rows.slice(i, i + 200));
+    var p = Promise.resolve(), bad = null;
+    parts.forEach(function (part) {
+      p = p.then(function () {
+        if (bad) return;
+        var q = mode === 'replace'
+          ? sb.from(t).upsert(part)
+          : sb.from(t).upsert(part, { ignoreDuplicates:true });
+        return q.then(function (r) {
+          if (r.error) { bad = r.error.message; return; }
+          res.done += part.length;
+        });
+      });
+    });
+    return p.then(function () {
+      if (bad) res.failed.push({ table:t, msg:bad });
+    });
+  }
+
+  function putSettings(t, rows, res) {
+    var row = rows[0];
+    if (!row) return;
+    var body = {};
+    Object.keys(row).forEach(function (k) {
+      if (k !== 'id' && k !== 'updated_at' && k !== 'updated_by') body[k] = row[k];
+    });
+    return sb.from(t).update(body).eq('id', row.id == null ? 1 : row.id).then(function (r) {
+      if (r.error) { res.failed.push({ table:t, msg:r.error.message }); return; }
+      res.done += 1;
+    });
+  }
+
+  /* Numbering wapas theek karne wali SQL. Backup file mein sequence ki
+     halat nahi hoti — naye database par ginti 1 se shuru ho jati hai aur
+     naya bill purane number se takra sakta hai. Yeh SQL ginti ko wahin le
+     jati hai jahan file mein sab se bara number hai. */
+  function lastNum(s) {
+    var m = String(s || '').match(/(\d+)\s*$/);
+    return m ? parseInt(m[1], 10) : 0;
+  }
+  function maxDocNo(rows, field, only) {
+    var n = 0;
+    (rows || []).forEach(function (r) {
+      if (only && !only(r)) return;
+      var v = lastNum(r[field]);
+      if (v > n) n = v;
+    });
+    return n;
+  }
+  function buildSeqSql(j) {
+    var T = j.tables || {};
+    var map = [
+      ['voucher_sale_seq',     maxDocNo(T.vouchers, 'vno', function (v) { return v.vtype === 'sale'; })],
+      ['voucher_purchase_seq', maxDocNo(T.vouchers, 'vno', function (v) { return v.vtype === 'purchase'; })],
+      ['mi_seq',   maxDocNo(T.material_inwards,  'ino')],
+      ['cj_seq',   maxDocNo(T.cutting_jobs,      'jno')],
+      ['dc_seq',   maxDocNo(T.delivery_challans, 'dno')],
+      ['mr_seq',   maxDocNo(T.material_returns,  'rno')],
+      ['sv_seq',   maxDocNo(T.service_invoices,  'sino')],
+      ['cv_seq',   maxDocNo(T.stock_conversions, 'cno')],
+      ['coil_seq', maxDocNo(T.coils,             'coil_serial')]
+    ];
+    var lines = map.filter(function (x) { return x[1] > 0; })
+                   .map(function (x) { return "select setval('" + x[0] + "', " + x[1] + ", true);"; });
+    return lines.length ? lines.join('\n') : '';
+  }
+
+  /* Asal kaam. Tarteeb ahem hai — pehle wo cheezein jin par baqi khadi
+     hain. Urhana ulti tarteeb mein, warna foreign key rok deti hai.
+
+     Do baatein pehle se alag hain:
+       1. Period lock pehle khol dete hain. Lock lagi ho to us se pehle ka
+          koi bill ya sheet insert ho hi nahi sakti — trg_period_lock_vouchers
+          aur trg_period_lock_sheets rok deti hain. Pehle yeh lock RESTORE_ORDER
+          mein sab se upar lagti thi, yani apne hi purane bills ka raasta band
+          kar deti thi. Ab aakhir mein wapas lagti hai.
+       2. Koi table fail ho to poora restore ruk nahi jata. Pehle pehli
+          hi ghalti par sab kuch khara reh jata tha — data aadha andar,
+          aadha bahar, aur upar se "mukammal" ka message. */
+  function runRestore(j, mode) {
+    var order = j.order || [];
+    var res = { done:0, failed:[], lockNote:'', seqSql:'' };
+    var chain = Promise.resolve();
+    var savedLock = null, hadLock = false;
+
+    /* ---- 1. Period lock khol do ---- */
+    chain = chain.then(function () {
+      return sb.from('period_lock').select('locked_before').eq('id', 1).maybeSingle()
+        .then(function (r) {
+          if (r.error) { res.failed.push({ table:'period_lock (padhna)', msg:r.error.message }); return; }
+          savedLock = r.data ? r.data.locked_before : null;
+          hadLock = !!savedLock;
+          if (!hadLock) return;
+          return sb.from('period_lock').update({ locked_before:null }).eq('id', 1).then(function (u) {
+            if (u.error) res.failed.push({ table:'period_lock (kholna)', msg:u.error.message });
+          });
+        });
+    });
+
+    /* ---- 2. replace: jo file mein nahi, wo urha do ---- */
     if (mode === 'replace') {
       order.slice().reverse().forEach(function (t) {
+        // settings ki single-row tables kabhi delete nahi hotin
+        if (t === 'period_lock' || SETTINGS_TABLES.indexOf(t) > -1) return;
         chain = chain.then(function () {
           var rows = j.tables[t] || [];
           var keep = rows.map(function (x) { return x.id; }).filter(Boolean);
-          var q = sb.from(t).delete();
-          q = keep.length ? q.not('id', 'in', '(' + keep.join(',') + ')')
-                          : q.gte('id', '00000000-0000-0000-0000-000000000000');
-          return q.then(function () {});
+          return deleteNotIn(t, keep).catch(function (e) {
+            res.failed.push({ table:t + ' (purana urhana)', msg:e.message });
+          });
         });
       });
     }
 
+    /* ---- 3. Data wapas daalo ---- */
     order.forEach(function (t) {
+      if (t === 'period_lock') return;               // sab se aakhir mein
       chain = chain.then(function () {
         var rows = j.tables[t] || [];
         if (!rows.length) return;
-        // 200 ki qist mein — ek saath bhejne par request bohat bari ho jati hai
-        var parts = [];
-        for (var i = 0; i < rows.length; i += 200) parts.push(rows.slice(i, i + 200));
-        var p = Promise.resolve();
-        parts.forEach(function (part) {
-          p = p.then(function () {
-            var q = mode === 'replace'
-              ? sb.from(t).upsert(part)
-              : sb.from(t).upsert(part, { ignoreDuplicates:true });
-            return q.then(function (r) {
-              if (r.error) throw new Error(t + ': ' + r.error.message);
-              done += part.length;
-            });
-          });
-        });
-        return p;
+        if (SETTINGS_TABLES.indexOf(t) > -1) {
+          // "sirf ghaayab" mode mein mojooda settings ko haath nahi lagate
+          return mode === 'replace' ? putSettings(t, rows, res) : undefined;
+        }
+        return putRows(t, rows, mode, res);
       });
     });
 
-    return chain.then(function () { return done; });
+    /* ---- 4. Period lock wapas laga do ---- */
+    chain = chain.then(function () {
+      var pl = (j.tables && j.tables.period_lock) || [];
+      var want = (mode === 'replace' && pl.length) ? pl[0].locked_before : savedLock;
+      if (want == null && !hadLock) return;
+      return sb.from('period_lock').update({ locked_before:want }).eq('id', 1).then(function (r) {
+        if (r.error) {
+          res.failed.push({ table:'period_lock (wapas lagana)', msg:r.error.message });
+          res.lockNote = 'Dhyan dein: period lock wapas nahi lag saki. Masters → Period Lock ' +
+                         'se khud laga lein' + (savedLock ? ' — pehle ' + savedLock + ' thi.' : '.');
+        } else {
+          res.lockNote = want ? 'Period lock ' + want + ' par wapas laga di gayi.'
+                              : 'Period lock khaali chhor di gayi (file mein bhi khaali thi).';
+        }
+      });
+    });
+
+    return chain.then(function () {
+      res.seqSql = buildSeqSql(j);
+      return res;
+    });
   }
 
   $('agingBtn').addEventListener('click', openAgingModal);

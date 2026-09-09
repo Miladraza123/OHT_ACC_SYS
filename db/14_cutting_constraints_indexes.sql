@@ -45,15 +45,22 @@ alter table coils add constraint coils_ownership_fields_check
     (ownership = 'own'   and item_id  is not null and party_id is null)
   );
 
--- ---------- Coil balance kabhi minus nahi ho sakta ----------
--- Do users ek saath ek hi coil se maal nikalne ki koshish karein to
--- doosra transaction yahin fail ho jayega — over-consumption namumkin.
-
-alter table coils add constraint coils_raw_balance_nonneg
-  check (received_weight - consumed_weight - returned_weight - closing_adjust_weight >= 0);
-
-alter table coils add constraint coils_pending_delivery_nonneg
-  check (finished_weight - delivered_weight >= 0);
+-- ---------- Coil ka wazan kabhi minus nahi ho sakta ----------
+--
+-- Pehle yahan do aur constraint thin — coils_raw_balance_nonneg aur
+-- coils_pending_delivery_nonneg. Wo production se hata di gayi hain aur
+-- yahan se bhi hata di gayi hain, kyunki wo sacchi halat ko rok deti thin:
+--
+--   * Coil band karte waqt closing_adjust_weight likhi jati hai. Purani
+--     raw_balance wali check us adjustment ko dobara ghata deti thi, is
+--     liye theek theek band hone wali coil bhi reject ho jati.
+--   * Weighbridge ka wazan hamesha thora aage peeche hota hai. Delivery
+--     ka slip 2-3 KG zyada aa jaye to pending_delivery wali check sahi
+--     challan ko bhi rok deti.
+--
+-- Ab yeh kaam trg_check_coil_limits karti hai (26 wali file mein). Wo
+-- cutting_settings ki tolerance dekh kar faisla karti hai — sakht bhi
+-- hai aur asal duniya ke mutabiq bhi.
 
 alter table coils add constraint coils_weights_nonneg
   check (received_weight >= 0 and consumed_weight >= 0 and returned_weight >= 0

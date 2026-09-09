@@ -116,8 +116,16 @@ SQL Editor mein is tarteeb se:
 | 23 | `23_own_conversion_triggers_rls.sql` | Conversion triggers, guards, RLS, views |
 | 24 | `24_final_wipe.sql` | Wipe Test Data ka aakhri version |
 | 25 | `25_app_settings.sql` | Company Setup: currency, financial year, voucher prefixes |
+| 26 | `26_sync_with_live.sql` | `item_units`, 14 columns, 4 functions, 6 triggers — sab zaroori |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
+
+> **26 ko chhorna mat.** Yeh file live system se milaan kar ke banai gayi
+> hai. Is ke baghair `item_units` table nahi banti (multi-unit billing kaam
+> nahi karti), item ka opening balance costing mein nahi jata, aur coil ki
+> hifazati checks nahi lagtin. Sab se ahem: is ke baghair roz ki backup
+> file se **restore kabhi kaam nahi karega** — kyunki backup un tables ka
+> data bhi lati hai jo is file ke baghair mojood hi nahi hotin.
 
 ### Check karein ke sab theek hai
 
@@ -398,6 +406,89 @@ Yeh sab chala kar dekh lein:
 
 **Test data saaf karein**
 - [ ] Masters → Wipe Test Data → sab test entries urhi?
+
+---
+
+## Backup aur Restore
+
+### Roz ka backup
+
+GitHub Actions har roz **subah 6 baje (Karachi)** khud chalta hai —
+`.github/workflows/backup.yml`. Haath se chalana ho to repo → Actions →
+Daily Backup → "Run workflow".
+
+Repo ki Settings → Secrets → Actions mein yeh saat cheezein honi chahiyen:
+
+| Secret | Kya hai |
+|---|---|
+| `SUPABASE_URL` | Project ka URL |
+| `SUPABASE_ANON_KEY` | Publishable (anon) key |
+| `BACKUP_EMAIL` | Kisi app user ka email — usi se login hota hai |
+| `BACKUP_PASSWORD` | Us ka password |
+| `GMAIL_USER` | Jis Gmail se bhejna hai |
+| `GMAIL_APP_PASSWORD` | Gmail ka App Password (aam password nahi) |
+| `BACKUP_TO_EMAIL` | Jahan backup pohanchni hai |
+
+Email mein **do file** aati hain:
+
+- **`QTC-Backup-<date>.xlsx`** — padhne ke liye. Ledger, party accounts,
+  bills, stock, coils, jobs, challans. **Is se system wapas nahi aata.**
+- **`QTC-Restore-<date>.json`** — system wapas laane ke liye. Saari 40
+  tables, apni id aur rishton ke saath. Isay kholne ki zaroorat nahi —
+  bas mehfooz rakhein.
+
+File ka naam us din ka hota hai **jis ka data hai** (chalne se ek din
+pehle), kyunki backup raat ko chalti hai.
+
+**Subject par `⚠ ADHOORA` likha ho** to koi table file mein nahi aa saki.
+Email ke andar us ka naam likha hota hai. Baqi data mehfooz hai, magar us
+table ka data us file se wapas nahi aayega — masla foran dekhein.
+
+### Restore
+
+Masters → **Restore from backup** (sirf admin ko dikhta hai).
+
+1. Email wali `QTC-Restore-<date>.json` chunein
+2. **Check karein** — pehle dikhta hai kya badlega, table ke hisaab se
+3. `RESTORE` likh kar confirm karein
+4. System pehle khud `QTC-Before-Restore-<date>.json` utaarta hai —
+   **ise sambhal kar rakhein**, ghalti ho jaye to yahin se wapas aa sakte hain
+
+Do tareeqe hain:
+
+- **Sirf ghaayab records** — jo file mein hai magar database mein nahi, sirf
+  wo daala jata hai. Mojood data aur settings ko haath nahi lagta.
+- **Poora replace** — database bilkul file jaisa ban jata hai. Jo file mein
+  nahi, wo urh jata hai.
+
+Restore ke baad natija saamne aata hai — kitni rows aayin, aur agar koi
+table na chal saki to us ka naam aur wajah. Ek table ka fail hona baqi ko
+nahi rokta.
+
+### Naye (khaali) database par restore — do cheezein alag se
+
+**1. Numbering.** Backup file mein ginti ki halat nahi hoti. Purane bill
+apne asal number ke saath wapas aa jate hain, magar naye database mein
+ginti 1 par khari hoti hai — yani agla naya bill purane number se takra
+sakta hai. Is liye restore ke aakhir mein system khud `setval` wali SQL
+bana kar dikhata hai. Usay copy kar ke SQL Editor mein ek dafa chala dein.
+Purane (usi) database par restore karein to yeh zaroorat nahi.
+
+**2. Users.** `app_users` ki id Supabase ke `auth.users` se juri hui hai,
+is liye backup se users wapas nahi aa sakte. Naye project mein pehle
+Section 8 ki tarah Super Admin banayein, phir Masters → Users se baqi
+users. (Purani entries ka `created_by` khali dikhega — hisaab par koi asar
+nahi.)
+
+Aur `party_opening_balances` / `item_cost_snapshot` sirf hisaab ka cache
+hain — zaroorat par khud dobara ban jate hain.
+
+### Daily Ledger ka apna backup
+
+`client1-daily-ledger.html` mein Save/Restore alag hai — wo browser ke
+apne data (localStorage) ka `.json` / `.csv` hai, `qtc-restore` nahi. Dono
+files ek doosre ki jagah kaam nahi karteen. Asal ledger data `sheets`
+table mein hota hai, jo roz ki backup mein already shamil hai.
 
 ---
 
