@@ -42,51 +42,66 @@ begin
     raise exception 'Sirf admin ye kar sakta hai';
   end if;
 
+  /* Har DELETE aur UPDATE par "where true" lazmi hai.
+
+     Supabase `authenticated` role par safeupdate laga kar rakhta hai —
+     wo bina WHERE wali DELETE/UPDATE ko rok deta hai, taake koi ghalti
+     se poori table na urha de. Yeh rok SECURITY DEFINER function ke
+     andar bhi lagti hai, kyunki wo session ki setting hai, user ki
+     nahi.
+
+     Isi wajah se wipe_test_data() app ke button se kabhi chali hi
+     nahi — "DELETE requires a WHERE clause" par ruk jati thi.
+
+     "where true" us guard ko poora kar deta hai aur kaam wahi rehta
+     hai: sab kuch urh jata hai. (06, 07 aur 22 wali files mein yeh
+     tareeqa pehle se istemaal hua hai.) */
+
   -- ---------- Own Stock Conversion ----------
-  delete from stock_conversion_outputs;
-  delete from stock_conversion_inputs;
-  delete from stock_conversions;
+  delete from stock_conversion_outputs where true;
+  delete from stock_conversion_inputs  where true;
+  delete from stock_conversions        where true;
 
   -- ---------- Party Cutting / Processing (lines pehle, phir headers) ----------
-  delete from service_invoice_challans;
-  delete from service_invoice_jobs;
-  delete from service_invoice_lines;
-  delete from service_invoices;
-  delete from delivery_challan_lines;
-  delete from delivery_challans;
-  delete from material_return_lines;
-  delete from material_returns;
-  delete from cutting_job_outputs;
-  delete from cutting_job_inputs;
-  delete from cutting_jobs;
-  delete from coils;
-  delete from material_inwards;
+  delete from service_invoice_challans where true;
+  delete from service_invoice_jobs     where true;
+  delete from service_invoice_lines    where true;
+  delete from service_invoices         where true;
+  delete from delivery_challan_lines   where true;
+  delete from delivery_challans        where true;
+  delete from material_return_lines    where true;
+  delete from material_returns         where true;
+  delete from cutting_job_outputs      where true;
+  delete from cutting_job_inputs       where true;
+  delete from cutting_jobs             where true;
+  delete from coils                    where true;
+  delete from material_inwards         where true;
 
   -- ---------- Accounting ----------
-  delete from voucher_lines;
-  delete from quotation_lines;
-  delete from po_lines;
-  delete from sales_return_lines;
-  delete from stock_transfer_lines;
-  delete from stock_adjustments;
-  delete from audit_log;
-  delete from item_cost_snapshot;
-  delete from party_opening_balances;
-  delete from vouchers;
-  delete from quotations;
-  delete from purchase_orders;
-  delete from sales_returns;
-  delete from stock_transfers;
-  delete from sheets;
+  delete from voucher_lines          where true;
+  delete from quotation_lines        where true;
+  delete from po_lines               where true;
+  delete from sales_return_lines     where true;
+  delete from stock_transfer_lines   where true;
+  delete from stock_adjustments      where true;
+  delete from audit_log              where true;
+  delete from item_cost_snapshot     where true;
+  delete from party_opening_balances where true;
+  delete from vouchers               where true;
+  delete from quotations             where true;
+  delete from purchase_orders        where true;
+  delete from sales_returns          where true;
+  delete from stock_transfers        where true;
+  delete from sheets                 where true;
 
-  update items set avg_cost = 0, stock_qty = 0;
+  update items set avg_cost = 0, stock_qty = 0 where true;
   update period_lock set locked_before = null where id = 1;
 
   if p_include_masters then
     -- item_units khud urh jati hain — items par cascade laga hua hai
-    delete from parties;
-    delete from items;
-    delete from companies;
+    delete from parties   where true;
+    delete from items     where true;
+    delete from companies where true;
   end if;
 
   /* ---------- Ginti wapas 1 par ----------
