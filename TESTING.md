@@ -78,6 +78,14 @@ Sirf tab jab client cutting ka kaam karta ho.
 | 3.10 | **Service Invoice** banayein | Number **SV-0001**, party ledger mein aa gaya |
 | 3.11 | Usi job ka doosra bill banane ki koshish | "pehle hi bill ho chuka" |
 | 3.12 | **Coil Ledger** kholein | Har harkat tarteeb se |
+| 3.13 | Cutting Job mein size daalein — Width `4` **ft**, Length `300` **mm** | Dono unit alag chun jate hain |
+| 3.14 | Us size ki **Qty unit** `Pcs` karein, ginti `12` | Save ho gayi |
+| 3.15 | Job → **Print** | Pehle poochta hai: A4 ya Receipt |
+| 3.16 | **A4 Print** | Bilkul waisi jaisi pehle thi |
+| 3.17 | **Receipt Print** | Chhoti parchi — upar Job No, Date, Party (sirf ek dafa) |
+| 3.18 | Receipt par har coil ka hissa | Coil ka apna number + naap + usi ki sizes |
+| 3.19 | Receipt par size ka likha hua | `4ft × 300mm` — dono unit apne apne |
+| 3.20 | Receipt ke neeche | Sirf Total Quantity, Total Weight, Signature |
 
 ---
 
@@ -172,3 +180,4 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | Backup email nahi aayi | GitHub → Actions → laal run → log dekhein |
 | "permission denied for function" | `db/27_security_hardening.sql` reh gaya hai |
 | Change Password par "yeh hissa database mein nahi hai" | `db/32_change_own_password.sql` reh gaya hai |
+| Cutting size mein Width/Length ke alag unit nazar nahi aate | `db/33_cutting_size_units.sql` reh gaya hai |

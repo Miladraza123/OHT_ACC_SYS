@@ -260,11 +260,16 @@
 
   /* ---------- print ---------- */
   .sheet { display:none; }
+  /* @page ab JS lagata hai — A4 ke liye A4, receipt ke liye 80mm chaurai
+     aur bulandi "auto", taake coils jitne bhi hon parchi utni lambi ho */
+  .receipt { display:none; }
   @media print {
-    body > *:not(.sheet) { display:none !important; }
+    /* body par "rcpt" class lagti hai to sirf receipt chhapti hai, warna
+       A4 wali sheet — dono kabhi aik saath nazar nahi aatin */
+    body:not(.rcpt) > *:not(.sheet)   { display:none !important; }
+    body.rcpt        > *:not(.receipt){ display:none !important; }
     body { background:#fff; overflow:visible; display:block; height:auto; }
-    @page { size:A4 portrait; margin:12mm 10mm; }
-    .sheet { display:block !important; font-size:10.5pt; color:#000;
+    body:not(.rcpt) .sheet { display:block !important; font-size:10.5pt; color:#000;
              -webkit-print-color-adjust:exact; print-color-adjust:exact; }
     .sheet .hd { display:flex; align-items:flex-start; border-bottom:1.2mm solid #2A2620;
                  padding-bottom:3mm; margin-bottom:4mm; }
@@ -296,6 +301,42 @@
                    color:#4A4436; }
     .sheet .sign { border-top:0.3mm solid #9C9384; padding-top:1.5mm; width:52mm; text-align:center; }
     .sheet .note { margin-top:4mm; font-size:9.5pt; color:#4A4436; white-space:pre-line; }
+
+    /* ---------- Receipt (chhoti parchi, 80mm) ----------
+       Chaurai band hai, bulandi khud barhti hai. Thermal printer par
+       rang nahi chhapta, is liye sirf kali lakeerein aur mota text. */
+    body.rcpt .receipt { display:block !important; width:72mm; margin:0; padding:3mm 0 5mm;
+      color:#000; font-family:'IBM Plex Sans',Arial,sans-serif; font-size:9pt; line-height:1.35;
+      -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .receipt .rc-ttl { text-align:center; font-size:12pt; font-weight:700; letter-spacing:1.6px;
+      text-transform:uppercase; margin-bottom:2.5mm; }
+    .receipt .rc-hd { border-top:0.4mm solid #000; border-bottom:0.4mm solid #000;
+      padding:1.8mm 0; margin-bottom:2.5mm; }
+    .receipt .rc-hd div { display:flex; gap:3mm; }
+    .receipt .rc-hd .k { flex:none; width:17mm; color:#000; font-size:8.5pt; }
+    .receipt .rc-hd .v { flex:1; font-weight:700; word-break:break-word; }
+    .receipt .rc-coil { margin-top:3mm; }
+    .receipt .rc-coil .cn { font-size:8pt; letter-spacing:1.2px; text-transform:uppercase;
+      font-weight:700; border-bottom:0.3mm dashed #000; padding-bottom:1mm; }
+    .receipt .rc-coil .sr { font-family:'IBM Plex Mono',monospace; font-size:10pt; font-weight:700;
+      margin-top:1.4mm; word-break:break-all; }
+    .receipt .rc-coil .cs { font-size:9pt; margin-top:.6mm; }
+    .receipt .rc-row { display:flex; gap:2mm; padding:1.3mm 0;
+      border-bottom:0.2mm dotted #555; }
+    .receipt .rc-row .sz { flex:1; word-break:break-word; }
+    .receipt .rc-row .qt { flex:none; text-align:right; font-family:'IBM Plex Mono',monospace;
+      font-weight:700; white-space:nowrap; }
+    .receipt .rc-none { font-size:8.5pt; padding:1.3mm 0; }
+    .receipt .rc-tot { border-top:0.4mm solid #000; margin-top:3.5mm; padding-top:2mm; }
+    .receipt .rc-tot div { display:flex; gap:3mm; padding:.7mm 0; }
+    /* Ginti kai unit mein ho sakti hai ("2,000 Kg · 12 Pcs · 20 Ft") — is
+       liye qeemat wala hissa hi barhta/tootta hai, naam wala nahi. Warna
+       lambi line parchi se bahar nikal jati. */
+    .receipt .rc-tot .k { flex:none; width:23mm; font-size:9pt; }
+    .receipt .rc-tot .v { flex:1; font-family:'IBM Plex Mono',monospace; font-weight:700;
+      text-align:right; word-break:break-word; }
+    .receipt .rc-sign { margin-top:9mm; font-size:9pt; }
+    .receipt .rc-sign .ln { border-bottom:0.3mm solid #000; height:7mm; margin-top:1mm; }
   }
 
   @media (max-width:560px) {
@@ -562,6 +603,7 @@
 </div>
 
 <div class="sheet" id="sheet"></div>
+<div class="receipt" id="receipt"></div>
 <div class="toast" id="toast"></div>
 
 <div class="ask" id="ask">
@@ -597,6 +639,18 @@
 </div>
 
 <!-- generic picker: unbilled jobs / ready-for-delivery -->
+<div class="ask" id="printPick">
+  <div class="box" style="max-width:340px">
+    <h4>Select Print Format</h4>
+    <p>Cutting Job kis shakl mein chhapna hai?</p>
+    <div style="display:flex;flex-direction:column;gap:9px;margin-bottom:15px">
+      <button class="btn pri" id="ppA4" style="width:100%;justify-content:center">A4 Print</button>
+      <button class="btn" id="ppRcpt" style="width:100%;justify-content:center">Receipt Print</button>
+    </div>
+    <div class="acts"><button class="btn" id="ppClose">Cancel</button></div>
+  </div>
+</div>
+
 <div class="ask" id="pickModal">
   <div class="box" style="max-width:520px">
     <h4 id="pickTitle"></h4>
@@ -963,7 +1017,7 @@
     if (!sb || loading) return Promise.resolve();
     loading = true;
     syncNote('Sync\u2026');
-    return loadMasters().then(loadDocs).then(function () {
+    return probeSizeUnits().then(loadMasters).then(loadDocs).then(function () {
       loading = false; syncNote('');
       counts(); render();
     }).catch(function (e) {
@@ -1738,6 +1792,38 @@
   /* ---------- Cutting Job ---------- */
   var jobInputs = [], jobOutputs = [];
 
+  /* Naap ke naye unit (db/33) database mein aa chuke hain ya nahi.
+
+     App ko us se pehle bhi chalte rehna chahiye — is liye ek dafa poochh
+     lete hain. Column na hon to purane tareeqe par (ek hi size_unit)
+     kaam hota rehta hai aur kuch nahi tootta. */
+  var hasSizeUnits = false;
+  var QTY_UNITS = ['Kg', 'Pcs', 'Ft'];      // aage naya unit yahan add ho sakta hai
+  var DIM_UNITS = ['mm', 'inch', 'ft'];
+
+  function probeSizeUnits() {
+    if (!sb) return Promise.resolve();
+    return sb.from('cutting_job_outputs').select('width_unit,length_unit,qty,qty_unit').limit(1)
+      .then(function (r) { hasSizeUnits = !r.error; })
+      .catch(function () { hasSizeUnits = false; });
+  }
+
+  /* Purani rows mein sirf size_unit hota tha — dono ke liye wohi. */
+  function wUnit(o) { return (o && (o.width_unit  || o.size_unit)) || 'mm'; }
+  function lUnit(o) { return (o && (o.length_unit || o.size_unit)) || 'mm'; }
+
+  /* Receipt par jo ginti chhapegi. Alag se likhi ho to wohi; warna
+     unit ke hisaab se weight ya pieces se khud aa jati hai — dobara
+     likhne ki zaroorat nahi. */
+  function qtyOf(o) {
+    if (!o) return { val:0, unit:'Kg' };
+    var u = o.qty_unit || 'Kg';
+    if (o.qty !== '' && o.qty != null && num(o.qty) > 0) return { val:num(o.qty), unit:u };
+    if (u === 'Pcs') return { val:num(o.pieces), unit:u };
+    if (u === 'Kg')  return { val:num(o.output_weight), unit:u };
+    return { val:0, unit:u };
+  }
+
   function newJob() {
     doc = null; jobInputs = []; jobOutputs = [];
     openEd('New Cutting Job', 'job', jobForm({ jdate:todayPKT(), warehouse_id:defWarehouse() }), saveJob);
@@ -1754,9 +1840,13 @@
       jobOutputs = (r[1].data || []).map(function (x) {
         return { _k:++lineSeq, id:x.id, coil_id:x.coil_id,
                  size_unit:x.size_unit || 'mm',
+                 width_unit:x.width_unit || x.size_unit || 'mm',
+                 length_unit:x.length_unit || x.size_unit || 'mm',
                  width:x.width == null ? '' : x.width,
                  length:x.length == null ? '' : x.length,
                  pieces:x.pieces == null ? '' : x.pieces,
+                 qty:x.qty == null ? '' : x.qty,
+                 qty_unit:x.qty_unit || 'Kg',
                  output_weight:x.output_weight, remarks:x.remarks || '' };
       });
       var ro = j.status === 'cancelled' || !can('cutting_job_edit');
@@ -1847,23 +1937,33 @@
     var dis = ro ? ' disabled' : '';
     var coilOpts = jobInputs.filter(function (l) { return l.coil_id; });
     $('jobOut').innerHTML = jobOutputs.length ? jobOutputs.map(function (l, ix) {
+      /* Har number ka apna unit — chaurai mm mein aur lambai feet mein
+         bhi ho sakti hai. db/33 abhi na chali ho to purana ek-unit wala
+         switch hi dikhta hai, taake kuch na tootay. */
+      function unitSw(field, list, cur) {
+        return '<div class="unitsw" data-unit="' + l._k + '" data-uf="' + field + '">' +
+          list.map(function (u) {
+            return '<button type="button" data-u="' + u + '"' +
+                   (cur === u ? ' class="on"' : '') + (ro ? ' disabled' : '') +
+                   '>' + u + '</button>';
+          }).join('') + '</div>';
+      }
+      var qUnit = l.qty_unit || 'Kg';
       return '<div class="ln szbox" data-k="' + l._k + '">' +
         '<div class="top">' +
           '<span class="szn">Size ' + (ix + 1) + '</span>' +
-          '<div class="unitsw" data-unit="' + l._k + '">' +
-            ['mm','ft','inch'].map(function (u) {
-              return '<button type="button" data-u="' + u + '"' +
-                     ((l.size_unit || 'mm') === u ? ' class="on"' : '') + (ro ? ' disabled' : '') +
-                     '>' + u + '</button>';
-            }).join('') +
-          '</div>' +
+          (hasSizeUnits ? '' : unitSw('size_unit', DIM_UNITS, l.size_unit || 'mm')) +
           (ro ? '' : '<button class="rm" data-rm="' + l._k + '">\u00d7</button>') +
         '</div>' +
         '<div class="f2">' +
           '<div class="f num" style="margin-bottom:7px"><label>Width</label>' +
-            '<input data-f="width" type="number" step="0.01" value="' + esc(l.width) + '"' + dis + '></div>' +
+            '<input data-f="width" type="number" step="0.01" value="' + esc(l.width) + '"' + dis + '>' +
+            (hasSizeUnits ? '<div style="margin-top:6px">' + unitSw('width_unit', DIM_UNITS, wUnit(l)) + '</div>' : '') +
+          '</div>' +
           '<div class="f num" style="margin-bottom:7px"><label>Length</label>' +
-            '<input data-f="length" type="number" step="0.01" value="' + esc(l.length) + '" placeholder="\u2014"' + dis + '></div>' +
+            '<input data-f="length" type="number" step="0.01" value="' + esc(l.length) + '" placeholder="\u2014"' + dis + '>' +
+            (hasSizeUnits ? '<div style="margin-top:6px">' + unitSw('length_unit', DIM_UNITS, lUnit(l)) + '</div>' : '') +
+          '</div>' +
         '</div>' +
         '<div class="f2">' +
           '<div class="f num" style="margin-bottom:0"><label>Pieces</label>' +
@@ -1871,6 +1971,18 @@
           '<div class="f num" style="margin-bottom:0"><label>Weight KG</label>' +
             '<input data-f="output_weight" type="number" step="0.001" value="' + esc(l.output_weight) + '"' + dis + '></div>' +
         '</div>' +
+        (hasSizeUnits
+          ? '<div class="f2" style="margin-top:7px">' +
+              '<div class="f num" style="margin-bottom:0"><label>Receipt qty</label>' +
+                '<input data-f="qty" type="number" step="0.001" value="' + esc(l.qty == null ? '' : l.qty) +
+                '" placeholder="khud"' + dis + '></div>' +
+              '<div class="f" style="margin-bottom:0"><label>Qty unit</label>' +
+                unitSw('qty_unit', QTY_UNITS, qUnit) + '</div>' +
+            '</div>' +
+            '<div class="hint" style="margin-top:5px">Receipt par yehi ginti chhapegi. ' +
+            'Khali chhorein to ' + (qUnit === 'Pcs' ? 'Pieces' : qUnit === 'Kg' ? 'Weight KG' : 'aap ki likhi ginti') +
+            ' se khud aa jayegi.</div>'
+          : '') +
         '<div class="f" style="margin:7px 0 0"><label>Remarks</label>' +
           '<input data-f="remarks" type="text" value="' + esc(l.remarks) + '"' + dis + '></div>' +
         (coilOpts.length > 1
@@ -1975,24 +2087,31 @@
       var lastSz = jobOutputs[jobOutputs.length - 1];
       jobOutputs.push({ _k:++lineSeq, id:null, coil_id:withCoil[0].coil_id,
                         size_unit:lastSz ? (lastSz.size_unit || 'mm') : 'mm',
-                        width:'', length:'', pieces:'', output_weight:'', remarks:'' });
+                        width_unit:lastSz ? wUnit(lastSz) : 'mm',
+                        length_unit:lastSz ? lUnit(lastSz) : 'mm',
+                        qty_unit:lastSz ? (lastSz.qty_unit || 'Kg') : 'Kg',
+                        width:'', length:'', pieces:'', qty:'', output_weight:'', remarks:'' });
       markDirty(); drawJobOutputs(false);
       var rows = $('jobOut').querySelectorAll('.szbox');
       var last = rows[rows.length - 1];
       if (last) last.querySelector('input[data-f="width"]').focus();
     });
-    // Har size ka apna unit — ek hi job mein kuch sizes mm mein aur
-    // kuch feet mein ho sakti hain
+    /* Har size ka apna unit — ek hi job mein kuch sizes mm mein aur kuch
+       feet mein ho sakti hain. Ab width, length aur ginti — teenon ka
+       apna apna unit. Kaunsa field badalna hai, wo tag khud batata hai. */
     $('jobOut').addEventListener('click', function (e) {
       var u = e.target.getAttribute('data-u'); if (!u) return;
       var box = e.target.closest('[data-unit]'); if (!box) return;
+      var field = box.getAttribute('data-uf') || 'size_unit';
       var k = num(box.getAttribute('data-unit'));
       var l = jobOutputs.filter(function (x) { return x._k === k; })[0];
-      if (!l || l.size_unit === u) return;
-      l.size_unit = u; markDirty();
+      if (!l || l[field] === u) return;
+      l[field] = u; markDirty();
       box.querySelectorAll('button').forEach(function (b) {
         b.classList.toggle('on', b.getAttribute('data-u') === u);
       });
+      // ginti ka unit badla to neeche wali hidayat bhi badalni chahiye
+      if (field === 'qty_unit') drawJobOutputs(false);
     });
   }
   function saveJob() {
@@ -2029,12 +2148,22 @@
         if (r2.error) throw r2.error;
         if (!outs.length) return { error:null };
         return sb.from('cutting_job_outputs').insert(outs.map(function (l, i) {
-          return { job_id:job.id, coil_id:l.coil_id, size_unit:l.size_unit || 'mm',
-                   width:l.width === '' ? null : num(l.width),
-                   length:l.length === '' ? null : num(l.length),
-                   pieces:l.pieces === '' ? 0 : num(l.pieces),
-                   output_weight:num(l.output_weight),
-                   remarks:l.remarks, line_no:i };
+          /* size_unit purani reports ke liye rakha hai — usi mein width
+             ka unit likhte hain, taake wo waise hi chalti rahein. */
+          var row = { job_id:job.id, coil_id:l.coil_id, size_unit:wUnit(l),
+                      width:l.width === '' ? null : num(l.width),
+                      length:l.length === '' ? null : num(l.length),
+                      pieces:l.pieces === '' ? 0 : num(l.pieces),
+                      output_weight:num(l.output_weight),
+                      remarks:l.remarks, line_no:i };
+          // db/33 abhi na chali ho to yeh column bhejna error de dega
+          if (hasSizeUnits) {
+            row.width_unit  = wUnit(l);
+            row.length_unit = lUnit(l);
+            row.qty         = (l.qty === '' || l.qty == null) ? null : num(l.qty);
+            row.qty_unit    = l.qty_unit || 'Kg';
+          }
+          return row;
         }));
       }).then(function (r3) {
         if (r3 && r3.error) throw r3.error;
@@ -4346,6 +4475,21 @@
     if (!rows.length) return '';
     return '<div style="margin-left:auto;text-align:right;font-size:9.5pt;line-height:1.6">' + rows.join('') + '</div>';
   }
+  /* @page CSS mein nahi likha ja sakta jo class ke hisaab se badle — is
+     liye print se pehle yahan se lagate hain. A4 ke liye A4, receipt ke
+     liye 80mm chaurai aur bulandi "auto" (jitni parchi utni lambi). */
+  function setPageRule(kind) {
+    var el = document.getElementById('pageRule');
+    if (!el) {
+      el = document.createElement('style');
+      el.id = 'pageRule';
+      document.head.appendChild(el);
+    }
+    el.textContent = kind === 'receipt'
+      ? '@page { size: 80mm auto; margin: 0 4mm; }'
+      : '@page { size: A4 portrait; margin: 12mm 10mm; }';
+  }
+
   function doPrint(container, filename) {
     var oldTitle = document.title;
     var oldTop = (function () {
@@ -4353,11 +4497,34 @@
       catch (e) { return oldTitle; }
     })();
     setPrintTitle(filename);
+    setPageRule('A4');
+    document.body.classList.remove('rcpt');
     window.addEventListener('afterprint', function restore() {
       restorePrintTitle(oldTitle, oldTop);
       window.removeEventListener('afterprint', restore);
     });
     printWhenReady(container);
+  }
+
+  /* Receipt ka apna print — body par "rcpt" lagti hai taake A4 wali
+     sheet chhupi rahe, aur print ke baad hamesha hat jati hai (chahe
+     user ne print kiya ho ya cancel). */
+  function doPrintReceipt(filename) {
+    var oldTitle = document.title;
+    var oldTop = (function () {
+      try { return window.top && window.top !== window ? window.top.document.title : oldTitle; }
+      catch (e) { return oldTitle; }
+    })();
+    setPrintTitle(filename);
+    setPageRule('receipt');
+    document.body.classList.add('rcpt');
+    window.addEventListener('afterprint', function restore() {
+      document.body.classList.remove('rcpt');
+      setPageRule('A4');
+      restorePrintTitle(oldTitle, oldTop);
+      window.removeEventListener('afterprint', restore);
+    });
+    window.print();
   }
 
   /* ---------- Delivery Challan ---------- */
@@ -4418,11 +4585,24 @@
   }
   var readyCache = {};   // output_id -> cutting size ki tafseel, challan print ke liye
   /* "580 x 2440 mm" ya sirf "580 mm" — length na ho to sirf width */
+  /* Width aur length ke unit alag ho sakte hain — "1220mm × 50ft".
+     Dono ek hi hon to purani shakl hi rehti hai ("1220 × 50 mm"), taake
+     A4 print aur purani reports bilkul waisi hi chhapein jaisi chhapti thin. */
   function sizeText(o) {
     if (!o) return '';
-    var u = o.size_unit || 'mm';
     if (o.width == null || o.width === '') return '';
-    return num(o.length) ? (o.width + ' \u00d7 ' + o.length + ' ' + u) : (o.width + ' ' + u);
+    var wu = wUnit(o), lu = lUnit(o);
+    if (!num(o.length)) return o.width + ' ' + wu;
+    if (wu === lu) return o.width + ' \u00d7 ' + o.length + ' ' + wu;
+    return o.width + wu + ' \u00d7 ' + o.length + lu;
+  }
+  /* Receipt ke liye — hamesha har number ke saath apna unit, bina jagah:
+     "4ft × 300mm". Chhoti parchi par yehi sab se saaf parha jata hai. */
+  function sizeTight(o) {
+    if (!o) return '';
+    if (o.width == null || o.width === '') return '';
+    var w = o.width + wUnit(o);
+    return num(o.length) ? (w + ' \u00d7 ' + o.length + lUnit(o)) : w;
   }
 
   /* ---------- Service Invoice ---------- */
@@ -4617,11 +4797,90 @@
     doPrint($('sheet'), fileSafe(d.jno) + '-' + fileSafe(p ? p.name : 'Party') + '-' + fileDate(d.jdate));
   }
 
+  /* ---------- Cutting Job — chhoti parchi (receipt) ----------
+
+     A4 wali print jaisi thi waisi hi hai. Yeh us ke saath ek doosra
+     option hai — workshop ke liye.
+
+     Upar sirf teen cheezein: Job No., Date, Party. Party ka naam ek hi
+     dafa aata hai, har coil ke saath nahi. Phir har coil apne hisse
+     mein — us ka wo unique number jo Material Inward ke waqt bana tha,
+     us ki naap (thickness × width), aur usi coil se nikli hui cutting
+     sizes. Neeche sirf kul ginti, kul wazan aur dastkhat. */
+  function printJobReceipt() {
+    if (!doc) return;
+    var d = doc, p = byId(parties, d.party_id);
+
+    var outs = jobOutputs.filter(function (l) {
+      return l.coil_id && (num(l.output_weight) > 0 || num(l.pieces) > 0 || num(l.qty) > 0);
+    });
+    if (!outs.length) { toast('Pehle cutting size daalein', true); return; }
+
+    /* Coil ki tarteeb wahi jo input mein hai — receipt aur A4 dono par
+       Coil 1, Coil 2 ek hi cheez ko kahen. */
+    var order = [];
+    jobInputs.forEach(function (l) {
+      if (l.coil_id && order.indexOf(l.coil_id) < 0) order.push(l.coil_id);
+    });
+    outs.forEach(function (l) { if (order.indexOf(l.coil_id) < 0) order.push(l.coil_id); });
+
+    var totWeight = 0, byUnit = {}, unitOrder = [];
+    var blocks = order.map(function (cid, i) {
+      var rows = outs.filter(function (l) { return l.coil_id === cid; });
+      if (!rows.length) return '';
+      var c = byId(coils, cid);
+      var coilSize = c ? [c.thickness_mm ? c.thickness_mm + 'mm' : '',
+                          c.width_mm ? c.width_mm + 'mm' : '']
+                         .filter(Boolean).join(' \u00d7 ') : '';
+      var lines = rows.map(function (l) {
+        totWeight += num(l.output_weight);
+        var q = qtyOf(l);
+        if (q.val > 0) {
+          if (!byUnit[q.unit]) { byUnit[q.unit] = 0; unitOrder.push(q.unit); }
+          byUnit[q.unit] += q.val;
+        }
+        return '<div class="rc-row"><div class="sz">' + esc(sizeTight(l) || '\u2014') + '</div>' +
+          '<div class="qt">' + (q.val > 0 ? kg(q.val) + ' ' + esc(q.unit) : '') + '</div></div>';
+      }).join('');
+      return '<div class="rc-coil">' +
+        '<div class="cn">Coil ' + (i + 1) + '</div>' +
+        '<div class="sr">' + esc(c ? c.coil_serial : '\u2014') + '</div>' +
+        (coilSize ? '<div class="cs">' + esc(coilSize) + '</div>' : '') +
+        (lines || '<div class="rc-none">Is coil ki koi size nahi</div>') +
+        '</div>';
+    }).join('');
+
+    var totQty = unitOrder.map(function (u) { return kg(byUnit[u]) + ' ' + u; }).join('  \u00b7  ');
+
+    $('receipt').innerHTML =
+      '<div class="rc-ttl">Cutting Job</div>' +
+      '<div class="rc-hd">' +
+        '<div><span class="k">Job No.</span><span class="v">' + esc(d.jno || '\u2014') + '</span></div>' +
+        '<div><span class="k">Date</span><span class="v">' + esc(fmtDate(d.jdate)) + '</span></div>' +
+        '<div><span class="k">Party</span><span class="v">' + esc(p ? p.name : '\u2014') + '</span></div>' +
+      '</div>' +
+      blocks +
+      '<div class="rc-tot">' +
+        '<div><span class="k">Total Quantity</span><span class="v">' + (totQty || '\u2014') + '</span></div>' +
+        '<div><span class="k">Total Weight</span><span class="v">' + kg(totWeight) + ' KG</span></div>' +
+      '</div>' +
+      '<div class="rc-sign">Signature<div class="ln"></div></div>';
+
+    doPrintReceipt(fileSafe(d.jno) + '-Receipt-' + fileSafe(p ? p.name : 'Party'));
+  }
+
+  /* Print ka button — Cutting Job par pehle poochta hai ke kaunsi shakl.
+     Baqi documents pehle ki tarah seedha chhapte hain. */
+  function closePrintPick() { $('printPick').classList.remove('on'); }
+  $('ppClose').addEventListener('click', closePrintPick);
+  $('ppA4').addEventListener('click', function () { closePrintPick(); printJob(); });
+  $('ppRcpt').addEventListener('click', function () { closePrintPick(); printJobReceipt(); });
+
   $('edPrint').addEventListener('click', function () {
     if (edKind === 'challan') printChallan();
     else if (edKind === 'invoice') printInvoice();
     else if (edKind === 'inward') printInward();
-    else if (edKind === 'job') printJob();
+    else if (edKind === 'job') $('printPick').classList.add('on');
   });
 
   (function boot() {
