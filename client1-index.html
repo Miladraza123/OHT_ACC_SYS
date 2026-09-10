@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>OHT Accounting System</title>
 <meta name="theme-color" content="#2A2620">
-<link rel="manifest" href="manifest.json">
-<link rel="icon" href="icons/favicon.ico" sizes="any">
-<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
-<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png">
-<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json?v=2">
+<link rel="icon" href="icons/favicon.ico?v=2" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png?v=2">
+<link rel="icon" type="image/png" sizes="16x16" href="icons/favicon-16.png?v=2">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png?v=2">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Accounting">
@@ -89,7 +89,7 @@
   <span class="mark" id="brandMark"></span>
   <div class="navs" id="navs"></div>
   <button class="out" id="installBtn" style="display:none">⭳ Install</button>
-  <button class="out" id="rl" title="Load the newest version">⟳</button>
+  <button class="out" id="rl" title="Update — naya version aur naye icons">⟳</button>
   <button class="out" id="out">Sign out</button>
 </div>
 
@@ -137,6 +137,8 @@
     { k:'cutting', label:'Cutting', file:'client1-cutting.html' }
   ];
 
+  var updating = false;   // poora update chal raha hai?
+
   /* ---------- PWA: Service Worker + Install + Update ---------- */
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then(function (reg) {
@@ -159,16 +161,86 @@
 
     var refreshedOnce = false;
     navigator.serviceWorker.addEventListener('controllerchange', function () {
-      if (refreshedOnce) return; refreshedOnce = true;
+      if (updating || refreshedOnce) return;   // apna update chal raha ho to
+      refreshedOnce = true;                    // reload hum khud karenge, yahan nahi
       location.reload();
     });
   }
-  $('updateNowBtn').addEventListener('click', function () {
-    navigator.serviceWorker.getRegistration().then(function (reg) {
-      if (reg && reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
+
+  /* ---------- Poora update: naya code AUR naye icons ----------
+
+     Sirf reload karne se icon nahi badalta — browser purana icon apne paas
+     rakh leta hai. Is liye teen kaam ek saath karne parte hain:
+
+       1. Service worker ke saare cache mita do
+       2. Icon aur manifest ke <link> dobara lagao, naye pate ke saath
+          (sirf href badalna kaafi nahi — poora tag badalna parta hai,
+           warna browser dobara mangwata hi nahi)
+       3. Naya service worker foran chalao, phir poora safha taaza
+
+     HOME SCREEN ka icon phir bhi is se nahi badlega. Wo install ke waqt
+     phone apne andar copy kar leta hai — us par kisi website ka ikhtiyar
+     nahi. Android manifest dobara parh kar (aam tor par ek din mein) khud
+     badal deta hai; iPhone par app hata kar dobara "Add to Home Screen"
+     karna parta hai. Yeh browser ki hadd hai, is app ki kami nahi.
+
+     Isi liye manifest mein har icon ka pata "?v=" ke saath likha hai —
+     icon badle to yeh number badalta hai, Android ko nayi shakl nazar
+     aati hai aur wo khud update kar leta hai. */
+
+  function refreshIconLinks() {
+    var v = Date.now();
+    var links = document.querySelectorAll(
+      'link[rel~="icon"], link[rel="apple-touch-icon"], link[rel="manifest"]');
+    Array.prototype.forEach.call(links, function (l) {
+      var href = (l.getAttribute('href') || '').split('?')[0];
+      if (!href) return;
+      var fresh = l.cloneNode(true);
+      fresh.setAttribute('href', href + '?v=' + v);
+      l.parentNode.replaceChild(fresh, l);
     });
+  }
+
+  function clearAllCaches() {
+    if (!window.caches || !caches.keys) return Promise.resolve();
+    return caches.keys().then(function (names) {
+      return Promise.all(names.map(function (n) { return caches.delete(n); }));
+    }).catch(function () {});
+  }
+
+  function activateNewWorker() {
+    if (!('serviceWorker' in navigator)) return Promise.resolve();
+    return navigator.serviceWorker.getRegistration().then(function (reg) {
+      if (!reg) return;
+      return Promise.resolve(reg.update()).catch(function () {}).then(function () {
+        if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
+      });
+    }).catch(function () {});
+  }
+
+  function fullUpdate() {
+    if (updating) return;
+    updating = true;
+
+    var btn = $('rl');
+    btn.disabled = true; btn.textContent = '\u2026';
     $('updateBanner').style.display = 'none';
-  });
+
+    var done = false;
+    function finish() {
+      if (done) return; done = true;
+      location.replace(location.pathname + '?v=' + Date.now() + location.hash);
+    }
+    // internet dheema ho ya kuch atak jaye to bhi app phansi na rahe
+    setTimeout(finish, 6000);
+
+    refreshIconLinks();
+    Promise.all([clearAllCaches(), activateNewWorker()])
+      .then(function () { setTimeout(finish, 500); })
+      .catch(function () { finish(); });
+  }
+
+  $('updateNowBtn').addEventListener('click', fullUpdate);
   $('updateLaterBtn').addEventListener('click', function () {
     $('updateBanner').style.display = 'none';
   });
@@ -217,22 +289,14 @@
   var frames = {}, current = null;
 
   // browser andar wali file ko yaad rakh leta hai — is nishaan se rozana taazi mangwao
-  function stamp(force) {
-    if (force) return String(Date.now());
+  function stamp() {
     var d = new Date();
     // VERSION ke saath bandha hua — jab shell nayi hoti hai, saari app bhi nayi aati hain
     return VERSION + '-' + d.getFullYear() + '' + (d.getMonth() + 1) + '' + d.getDate();
   }
-  var bust = stamp(false);
-
-  function reloadAll() {
-    bust = stamp(true);
-    $('boot').style.display = '';
-    Object.keys(frames).forEach(function (k) {
-      var app = APPS.filter(function (a) { return a.k === k; })[0];
-      if (app) frames[k].src = app.file + '?v=' + bust;
-    });
-  }
+  // "?v=" shell ke apne pate se — Update dabate hi poora safha naye nishaan
+  // ke saath khulta hai, is liye chaaron apps bhi apne aap nayi aa jati hain
+  var bust = (/[?&]v=(\d+)/.exec(location.search) || [])[1] || stamp();
 
   /* ---------- nav ---------- */
   APPS.forEach(function (a) {
@@ -322,7 +386,7 @@
   });
 
   /* ---------- sign out ---------- */
-  $('rl').addEventListener('click', reloadAll);
+  $('rl').addEventListener('click', fullUpdate);
   $('out').addEventListener('click', function () { $('ask').classList.add('on'); });
   $('askNo').addEventListener('click', function () { $('ask').classList.remove('on'); });
   /* Is device par mehfooz data mitana — offline queue, cache, aur Daily

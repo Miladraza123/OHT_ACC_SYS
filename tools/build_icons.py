@@ -88,6 +88,53 @@ def render(alpha, isblue, size, pad):
     return out.convert('RGB')     # koi transparency nahi — iOS peeche kala bhar deta hai
 
 
+def bump_icon_version():
+    """manifest.json aur chhe HTML pages mein icon ka "?v=" number aik barha deta hai.
+
+    Yeh qadam chhorna sab se aam ghalti hai: icons badal jate hain magar
+    pata wahi rehta hai, is liye phone purana icon hi dikhata rehta hai.
+    Naya pata dekh kar hi Android manifest dobara parhta hai aur home
+    screen ka icon khud badalta hai.
+    """
+    import json
+    import re
+
+    root = os.path.dirname(HERE)
+    man_path = os.path.join(root, 'manifest.json')
+
+    with open(man_path, encoding='utf-8') as f:
+        man = json.load(f)
+
+    cur = 0
+    for ic in man.get('icons', []):
+        m = re.search(r'\?v=(\d+)', ic.get('src', ''))
+        if m:
+            cur = max(cur, int(m.group(1)))
+    new = cur + 1
+
+    for ic in man.get('icons', []):
+        ic['src'] = ic['src'].split('?')[0] + '?v=%d' % new
+    with open(man_path, 'w', encoding='utf-8') as f:
+        f.write(json.dumps(man, indent=2, ensure_ascii=False) + '\n')
+
+    pages = ['index.html', 'client1-index.html', 'client1-masters.html',
+             'client1-billing.html', 'client1-cutting.html', 'client1-daily-ledger.html']
+    icon_re = re.compile(r'(href=")(icons/[A-Za-z0-9._-]+)(?:\?v=\d+)?(")')
+    man_re  = re.compile(r'(href=")(manifest\.json)(?:\?v=\d+)?(")')
+    for name in pages:
+        fp = os.path.join(root, name)
+        if not os.path.exists(fp):
+            continue
+        with open(fp, encoding='utf-8') as f:
+            t = f.read()
+        t = icon_re.sub(lambda mo: '%s%s?v=%d%s' % (mo.group(1), mo.group(2), new, mo.group(3)), t)
+        t = man_re.sub(lambda mo: '%s%s?v=%d%s' % (mo.group(1), mo.group(2), new, mo.group(3)), t)
+        with open(fp, 'w', encoding='utf-8') as f:
+            f.write(t)
+
+    return new
+
+
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else os.path.join(HERE, 'logo-master.png')
     alpha, isblue = load_mark(src)
@@ -111,7 +158,9 @@ def main():
         os.path.join(OUT, 'favicon.ico'), 'ICO', sizes=[(16, 16), (32, 32), (48, 48)])
     print('  %-24s 16+32+48' % 'favicon.ico')
 
-    print('\nHo gaya — 15 files. Ab sw.js ka CACHE_VERSION barha dein.')
+    v = bump_icon_version()
+    print('\n  icon ka pata ab ?v=%d — manifest aur chhe pages mein laga diya' % v)
+    print('\nHo gaya — 15 files. Ab sirf sw.js ka CACHE_VERSION barhana baqi hai.')
 
 
 if __name__ == '__main__':
