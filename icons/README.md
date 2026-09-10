@@ -46,16 +46,51 @@ deta hai, is liye in mein logo chhota rakha gaya hai aur charon taraf
 khaali jagah chhori gayi hai. Isi liye maskable file khol kar dekhein to
 logo chhota lagta hai — yeh theek hai, ghalti nahi.
 
+## Icon ka pata — `?v=` wala number
+
+Har jagah icon ka pata `?v=2` ke saath likha hai — `manifest.json` mein
+bhi aur chhe HTML pages mein bhi.
+
+**Wajah:** agar pata wahi rahe to phone samajhta hai "yehi icon hai jo
+mere paas pehle se hai" aur naya mangwata hi nahi. Pata badalne par
+Android manifest dobara parhta hai, dekhta hai ke icon nayi hai, aur
+home screen wala icon **khud badal deta hai** — bina app hatae. (Aam
+tor par ek din ke andar; iPhone par yeh nahi hota, wahan app hata kar
+dobara "Add to Home Screen" karna parta hai.)
+
+Yeh number `tools/build_icons.py` **khud barha deta hai** — manifest aur
+chhe ke chhe pages mein. Haath se badalne ki zaroorat nahi.
+
 ## Dobara banane ka tareeqa
 
 Logo badle to 1024×1024 (ya us se bara) PNG rakh kar yeh script chalayein:
 
 ```
-tools/build_icons.py     # saari 15 files aik saath bana deta hai
+python3 tools/build_icons.py naya-logo.png
 ```
 
-Us ke baad **`sw.js` ka `CACHE_VERSION` barhana zaroori hai** — warna
-purane device par purana icon hi cache mein para rahega.
+Yeh do kaam karta hai:
+
+1. Saari 15 icon files bana deta hai
+2. `?v=` number aik barha deta hai (manifest + chhe pages)
+
+Us ke baad sirf **`sw.js` ka `CACHE_VERSION` barhana** baqi rehta hai —
+warna purane device par purani files cache mein pari rahengi.
+
+## App ke andar "Update" button
+
+Shell (`client1-index.html`) ke upar `⟳` button hai. Dabane par:
+
+* service worker ke saare cache mit jate hain
+* icon aur manifest ke `<link>` naye pate ke saath dobara lagte hain
+  (sirf `href` badalna kaafi nahi — poora tag badalna parta hai)
+* naya service worker foran chalta hai
+* poora safha naye nishaan ke saath khulta hai, chaaron apps samet
+
+Is se **browser tab ka icon foran** badal jata hai. **Home screen ka icon
+is se nahi badalta** — wo install ke waqt phone apne andar copy kar leta
+hai aur us par kisi website ka ikhtiyar nahi. Upar wala `?v=` wala tareeqa
+hi wahan kaam aata hai.
 
 ## Abhi na hon to?
 
