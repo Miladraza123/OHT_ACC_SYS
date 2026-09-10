@@ -93,7 +93,11 @@
   <button class="out" id="out">Sign out</button>
 </div>
 
-<div id="updateBanner" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:#2A2620;color:#F5F1E6;padding:10px 16px;display:flex;align-items:center;gap:12px;font-size:13px;font-family:'IBM Plex Sans',sans-serif">
+<!-- AHEM: yahan "display" sirf EK dafa likha jaye. Pehle "display:none" ke baad
+     "display:flex" bhi likha tha — CSS mein aakhri wala jeetta hai, is liye banner
+     HAMESHA dikhta tha, chahe koi update ho ya na ho. Banda "Update karein" dabata,
+     safha reload hota, aur banner phir wahin. Dikhane ka kaam JS karta hai. -->
+<div id="updateBanner" style="display:none;position:fixed;left:0;right:0;bottom:0;z-index:60;background:#2A2620;color:#F5F1E6;padding:10px 16px;align-items:center;gap:12px;font-size:13px;font-family:'IBM Plex Sans',sans-serif">
   <span style="flex:1">Naya version available hai.</span>
   <button id="updateNowBtn" style="background:#B0824A;color:#2A2620;border:none;padding:7px 14px;border-radius:7px;font-size:13px;font-weight:600">Update karein</button>
   <button id="updateLaterBtn" style="background:none;color:#D9CFBE;border:none;padding:7px 10px;font-size:13px">Baad mein</button>
@@ -139,20 +143,33 @@
 
   var updating = false;   // poora update chal raha hai?
 
+  /* Update ke foran baad banner dobara na dikhe. Warna banda samajhta hai
+     ke button kaam hi nahi kar raha — dabata rehta hai aur safha bar bar
+     refresh hota rehta hai. Waqai nayi shakl aayi to banner thori der
+     baad khud wapas aa jayega. */
+  function markUpdated() {
+    try { sessionStorage.setItem(APP.key('just-updated'), String(Date.now())); } catch (e) {}
+  }
+  function updatedJustNow() {
+    try { return Date.now() - (+sessionStorage.getItem(APP.key('just-updated')) || 0) < 30000; }
+    catch (e) { return false; }
+  }
+
   /* ---------- PWA: Service Worker + Install + Update ---------- */
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then(function (reg) {
       // Naya SW "waiting" state mein aa jaye to banner dikhado — user ki
       // marzi se hi activate hoga, kabhi khud-ba-khud bill-likhte waqt reload nahi
       function showUpdateBannerIfWaiting() {
-        if (reg.waiting) $('updateBanner').style.display = 'flex';
+        if (reg.waiting && !updatedJustNow()) $('updateBanner').style.display = 'flex';
       }
       showUpdateBannerIfWaiting();
       reg.addEventListener('updatefound', function () {
         var newSW = reg.installing;
         if (!newSW) return;
         newSW.addEventListener('statechange', function () {
-          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+          if (newSW.state === 'installed' && navigator.serviceWorker.controller
+              && !updatedJustNow()) {
             $('updateBanner').style.display = 'flex';
           }
         });
@@ -212,9 +229,39 @@
     if (!('serviceWorker' in navigator)) return Promise.resolve();
     return navigator.serviceWorker.getRegistration().then(function (reg) {
       if (!reg) return;
-      return Promise.resolve(reg.update()).catch(function () {}).then(function () {
-        if (reg.waiting) reg.waiting.postMessage('SKIP_WAITING');
-      });
+
+      function wake(sw) { if (sw) { try { sw.postMessage('SKIP_WAITING'); } catch (e) {} } }
+
+      /* AHEM — yahi wo ghalti thi jis se Update ka button "kaam hi nahi
+         karta" lagta tha:
+
+         reg.update() poora hone ka matlab yeh NAHI ke naya worker tayyar
+         ho gaya. Wo aksar us waqt abhi "installing" hota hai aur
+         reg.waiting khali hoti hai. Purana code us khali waiting ko dekh
+         kar SKIP_WAITING bhejta hi nahi tha — purana worker qabza kiye
+         baitha rehta, reload ke baad banner phir aa jata, aur banda
+         dabata rehta.
+
+         Ab hum us ke "installed" hone ka intezar karte hain, phir kehte
+         hain. */
+      function whenReady() {
+        if (reg.waiting) { wake(reg.waiting); return Promise.resolve(); }
+        var sw = reg.installing;
+        if (!sw) return Promise.resolve();          // kuch naya hai hi nahi
+        return new Promise(function (ready) {
+          sw.addEventListener('statechange', function onChange() {
+            if (sw.state === 'installed') {
+              sw.removeEventListener('statechange', onChange);
+              wake(reg.waiting || sw); ready();
+            } else if (sw.state === 'activated' || sw.state === 'redundant') {
+              sw.removeEventListener('statechange', onChange);
+              ready();
+            }
+          });
+        });
+      }
+
+      return Promise.resolve(reg.update()).catch(function () {}).then(whenReady);
     }).catch(function () {});
   }
 
@@ -229,14 +276,22 @@
     var done = false;
     function finish() {
       if (done) return; done = true;
+      markUpdated();      // reload ke baad banner foran dobara na aaye
       location.replace(location.pathname + '?v=' + Date.now() + location.hash);
     }
     // internet dheema ho ya kuch atak jaye to bhi app phansi na rahe
-    setTimeout(finish, 6000);
+    setTimeout(finish, 8000);
+
+    // naya worker qabza le le — yehi asal nishani hai ke update ho gaya
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('controllerchange', function () {
+        setTimeout(finish, 200);
+      });
+    }
 
     refreshIconLinks();
     Promise.all([clearAllCaches(), activateNewWorker()])
-      .then(function () { setTimeout(finish, 500); })
+      .then(function () { setTimeout(finish, 1200); })
       .catch(function () { finish(); });
   }
 
@@ -270,10 +325,13 @@
 
   /* khud ko dekho — GitHub par nayi shakl aa gayi ho to foran badal jao.
      Sirf meta tag par bharosa nahi, browser use aksar nazarandaz karta hai. */
-  var VERSION = '60';
+  var VERSION = '61';
   (function selfCheck() {
     if (!window.fetch) return;
-    var here = location.pathname.replace(/[^/]*$/, '') + 'index.html';
+    // AHEM: yahan pehle root wali index.html mangwai jati thi — magar wo to
+    // sirf redirect ka safha hai, us mein VERSION hai hi nahi. Is liye yeh
+    // jaanch kabhi chali hi nahi. Ab shell apni hi file dekhti hai.
+    var here = location.pathname.replace(/[^/]*$/, '') + 'client1-index.html';
     fetch(here + '?probe=' + Date.now(), { cache:'no-store' })
       .then(function (r) { return r.ok ? r.text() : null; })
       .then(function (t) {
