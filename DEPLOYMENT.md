@@ -123,7 +123,7 @@ SQL Editor mein is tarteeb se:
 | 30 | `30_username_rename.sql` | Username badalna dono jagah — **lazmi** |
 | 31 | `31_user_management.sql` | User banana aur password badalna app se — **lazmi** |
 | 32 | `32_change_own_password.sql` | Apna password khud badalna (sidebar) — **lazmi** |
-| 33 | `33_cutting_size_units.sql` | Cutting size mein width/length ke alag unit aur receipt qty |
+| 33 | `33_cutting_size_units.sql` | Cutting size mein Width/Length ke alag unit (mm/inch/ft) |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 

@@ -78,14 +78,19 @@ Sirf tab jab client cutting ka kaam karta ho.
 | 3.10 | **Service Invoice** banayein | Number **SV-0001**, party ledger mein aa gaya |
 | 3.11 | Usi job ka doosra bill banane ki koshish | "pehle hi bill ho chuka" |
 | 3.12 | **Coil Ledger** kholein | Har harkat tarteeb se |
-| 3.13 | Cutting Job mein size daalein — Width `4` **ft**, Length `300` **mm** | Dono unit alag chun jate hain |
-| 3.14 | Us size ki **Qty unit** `Pcs` karein, ginti `12` | Save ho gayi |
-| 3.15 | Job → **Print** | Pehle poochta hai: A4 ya Receipt |
-| 3.16 | **A4 Print** | Bilkul waisi jaisi pehle thi |
-| 3.17 | **Receipt Print** | Chhoti parchi — upar Job No, Date, Party (sirf ek dafa) |
-| 3.18 | Receipt par har coil ka hissa | Coil ka apna number + naap + usi ki sizes |
-| 3.19 | Receipt par size ka likha hua | `4ft × 300mm` — dono unit apne apne |
-| 3.20 | Receipt ke neeche | Sirf Total Quantity, Total Weight, Signature |
+| 3.13 | Cutting Job mein size daalein — Width `4` **ft**, Length `10` **ft**, Pieces `20`, coil `4mm` | Weight khud `2332.8` ban jati hai |
+| 3.14 | Pieces `10` kar dein | Weight khud aadhi ho kar `1166.4` ho jati hai |
+| 3.15 | Width ya Length ka unit badlein (jaise `mm` se `ft`) | Weight foran dobara ban jati hai |
+| 3.16 | Weight khud khana chhu kar apna number likh dein | Mehfooz rehta hai jab tak Width/Length/Pieces/coil na badlein |
+| 3.17 | Job → **Print** | Pehle poochta hai: **A4 Print**, **80mm Receipt**, ya **54mm Receipt** |
+| 3.18 | **A4 Print** | Bilkul waisi jaisi pehle thi |
+| 3.19 | **80mm Receipt** | Asal 80mm thermal chaurai — A4 ka koi andaaza nahi |
+| 3.20 | **54mm Receipt** | Asal 54mm thermal chaurai — chhota font, magar parha ja sake |
+| 3.21 | Receipt par har coil ka hissa | Coil ka apna number + naap + usi ki sizes |
+| 3.22 | Receipt par size ka likha hua | `4ft × 300mm` — dono unit apne apne |
+| 3.23 | Har cutting-size line | Pcs AUR Weight dono sath (jaise `20 Pcs · 2,000 Kg`) |
+| 3.24 | Bahut lamba naam/number kisi coil/party mein daal kar dekhein | Kata ya chhupa nahi — agli line par chala jata hai |
+| 3.25 | Receipt ke neeche | Sirf Total Pcs, Total Weight, Signature |
 
 ---
 
