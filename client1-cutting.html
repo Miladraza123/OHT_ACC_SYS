@@ -262,46 +262,11 @@
   .sheet { display:none; }
   /* @page ab JS lagata hai — A4 ke liye A4, receipt ke liye 80mm chaurai
      aur bulandi "auto", taake coils jitne bhi hon parchi utni lambi ho */
-  .receipt { display:none; }
-  @media print {
-    /* body par "rcpt" class lagti hai to sirf receipt chhapti hai, warna
-       A4 wali sheet — dono kabhi aik saath nazar nahi aatin */
-    body:not(.rcpt) > *:not(.sheet)   { display:none !important; }
-    body.rcpt        > *:not(.receipt){ display:none !important; }
-    body { background:#fff; overflow:visible; display:block; height:auto; }
-    body:not(.rcpt) .sheet { display:block !important; font-size:10.5pt; color:#000;
-             -webkit-print-color-adjust:exact; print-color-adjust:exact; }
-    .sheet .hd { display:flex; align-items:flex-start; border-bottom:1.2mm solid #2A2620;
-                 padding-bottom:3mm; margin-bottom:4mm; }
-    .sheet .hd .firm { font-family:'IBM Plex Serif',Georgia,serif; font-size:18pt; font-weight:600; }
-    .sheet .hd .kind { font-size:8.5pt; letter-spacing:2.4px; color:#4A4436; margin-top:1.5mm;
-                       text-transform:uppercase; }
-    .sheet .hd .logo { max-height:18mm; max-width:29mm; object-fit:contain; align-self:center;
-                       margin-right:4mm; }
-    .sheet .hd .adr { font-size:9pt; color:#4A4436; margin-top:1mm; line-height:1.45; }
-    .sheet .hd .rt { margin-left:auto; text-align:right; font-size:10pt; }
-    .sheet .hd .rt .no { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13pt; }
-    .sheet .who { display:flex; gap:8mm; margin-bottom:4mm; font-size:10pt; }
-    .sheet .who .lb { font-size:7.5pt; letter-spacing:1.4px; color:#9C9384; text-transform:uppercase;
-                      margin-bottom:1mm; }
-    .sheet .who .nm { font-weight:600; font-size:12pt; }
-    .sheet table { width:100%; border-collapse:collapse; }
-    .sheet th { font-size:8pt; letter-spacing:1px; text-transform:uppercase; color:#4A4436;
-                border-bottom:0.5mm solid #4A4436; padding:2mm 1.5mm; text-align:left; }
-    .sheet td { padding:2mm 1.5mm; border-bottom:0.2mm solid #CBD2D9; font-size:10.5pt;
-                vertical-align:top; }
-    .sheet .r { text-align:right; font-family:'IBM Plex Mono',monospace; }
-    .sheet .c { text-align:center; }
-    .sheet tfoot td { border-bottom:none; padding-top:2mm; }
-    .sheet tfoot .k { text-align:right; color:#4A4436; font-size:10pt; }
-    .sheet tfoot .v { text-align:right; font-family:'IBM Plex Mono',monospace; font-weight:600; }
-    .sheet tfoot .grand td { border-top:0.6mm solid #2A2620; font-size:13pt; font-weight:700;
-                             padding-top:2.5mm; }
-    .sheet .foot { margin-top:14mm; display:flex; justify-content:space-between; font-size:9pt;
-                   color:#4A4436; }
-    .sheet .sign { border-top:0.3mm solid #9C9384; padding-top:1.5mm; width:52mm; text-align:center; }
-    .sheet .note { margin-top:4mm; font-size:9.5pt; color:#4A4436; white-space:pre-line; }
-
+  .receipt { display:none; position:fixed; left:-99999px; top:0; z-index:-1; }
+  /* Print se theek pehle body par "rcpt"/"rcpt80"/"rcpt54" lagti hai — is se
+     yeh sizing khud lag jati hai (off-screen, taake JS is ki asal bulandi
+     naap sake). @media print mein neeche iski jagah wapas normal ho jati hai
+     taake print ke waqt kaghaz par theek se aaye. */
     /* ---------- Receipt (chhoti thermal parchi, 80mm ya 54mm) ----------
        Chaurai JS se lagi jati hai (body.rcpt80 / body.rcpt54), bulandi khud
        barhti hai. Koi A4 andaaza nahi — @page ka size bhi JS lagata hai
@@ -380,6 +345,47 @@
     body.rcpt54 .receipt .rc-tot .k { width:18mm; font-size:7.2pt; }
     body.rcpt54 .receipt .rc-sign { margin-top:6mm; font-size:7.2pt; }
     body.rcpt54 .receipt .rc-sign .ln { height:6mm; margin-top:1mm; }
+
+  @media print {
+    /* body par "rcpt" class lagti hai to sirf receipt chhapti hai, warna
+       A4 wali sheet — dono kabhi aik saath nazar nahi aatin */
+    body:not(.rcpt) > *:not(.sheet)   { display:none !important; }
+    body.rcpt        > *:not(.receipt){ display:none !important; }
+    body { background:#fff; overflow:visible; display:block; height:auto; }
+    /* Off-screen napne ke liye jo positioning lagi thi wo print ke waqt hata do */
+    body.rcpt .receipt { position:static !important; left:auto !important; top:auto !important; z-index:auto !important; }
+    body:not(.rcpt) .sheet { display:block !important; font-size:10.5pt; color:#000;
+             -webkit-print-color-adjust:exact; print-color-adjust:exact; }
+    .sheet .hd { display:flex; align-items:flex-start; border-bottom:1.2mm solid #2A2620;
+                 padding-bottom:3mm; margin-bottom:4mm; }
+    .sheet .hd .firm { font-family:'IBM Plex Serif',Georgia,serif; font-size:18pt; font-weight:600; }
+    .sheet .hd .kind { font-size:8.5pt; letter-spacing:2.4px; color:#4A4436; margin-top:1.5mm;
+                       text-transform:uppercase; }
+    .sheet .hd .logo { max-height:18mm; max-width:29mm; object-fit:contain; align-self:center;
+                       margin-right:4mm; }
+    .sheet .hd .adr { font-size:9pt; color:#4A4436; margin-top:1mm; line-height:1.45; }
+    .sheet .hd .rt { margin-left:auto; text-align:right; font-size:10pt; }
+    .sheet .hd .rt .no { font-family:'IBM Plex Mono',monospace; font-weight:600; font-size:13pt; }
+    .sheet .who { display:flex; gap:8mm; margin-bottom:4mm; font-size:10pt; }
+    .sheet .who .lb { font-size:7.5pt; letter-spacing:1.4px; color:#9C9384; text-transform:uppercase;
+                      margin-bottom:1mm; }
+    .sheet .who .nm { font-weight:600; font-size:12pt; }
+    .sheet table { width:100%; border-collapse:collapse; }
+    .sheet th { font-size:8pt; letter-spacing:1px; text-transform:uppercase; color:#4A4436;
+                border-bottom:0.5mm solid #4A4436; padding:2mm 1.5mm; text-align:left; }
+    .sheet td { padding:2mm 1.5mm; border-bottom:0.2mm solid #CBD2D9; font-size:10.5pt;
+                vertical-align:top; }
+    .sheet .r { text-align:right; font-family:'IBM Plex Mono',monospace; }
+    .sheet .c { text-align:center; }
+    .sheet tfoot td { border-bottom:none; padding-top:2mm; }
+    .sheet tfoot .k { text-align:right; color:#4A4436; font-size:10pt; }
+    .sheet tfoot .v { text-align:right; font-family:'IBM Plex Mono',monospace; font-weight:600; }
+    .sheet tfoot .grand td { border-top:0.6mm solid #2A2620; font-size:13pt; font-weight:700;
+                             padding-top:2.5mm; }
+    .sheet .foot { margin-top:14mm; display:flex; justify-content:space-between; font-size:9pt;
+                   color:#4A4436; }
+    .sheet .sign { border-top:0.3mm solid #9C9384; padding-top:1.5mm; width:52mm; text-align:center; }
+    .sheet .note { margin-top:4mm; font-size:9.5pt; color:#4A4436; white-space:pre-line; }
   }
 
   @media (max-width:560px) {
@@ -4530,11 +4536,24 @@
     return '<div style="margin-left:auto;text-align:right;font-size:9.5pt;line-height:1.6">' + rows.join('') + '</div>';
   }
   /* @page CSS mein nahi likha ja sakta jo class ke hisaab se badle — is
-     liye print se pehle yahan se lagate hain. A4 ke liye A4, receipt ke
-     liye asal thermal kaghaz ki chaurai (80mm ya 54mm) aur bulandi "auto"
-     (jitni parchi utni lambi) — kabhi A4 ke naap mein nahi. */
+     liye print se pehle yahan se lagate hain. A4 ke liye A4.
+
+     Receipt ke liye asal thermal kaghaz ki chaurai (80mm ya 54mm) — magar
+     bulandi "auto" nahi likh sakte. CSS ke usool mein @page size ya to
+     "auto" akela hota hai ya do poore number (chaurai aur bulandi) — "80mm
+     auto" jaisi mili-juli value ASAL MEIN GHALAT hai. Kuch browser (jaise
+     desktop Chrome) isay chalne de dete hain, magar Android ka print
+     dialog isay bilkul nazarandaz kar deta hai aur khud-ba-khud "Letter"
+     ya "A4" jaise system ke default kaghaz par wapas chala jata hai —
+     poori receipt chhoti si box ban kar us bare kaghaz ke kone mein reh
+     jati hai.
+
+     Hal: bulandi bhi ek pooora number deni parti hai. Print se theek
+     pehle receipt ko off-screen (screen se bahar) dikha kar us ki asal
+     bulandi naap lete hain (measureReceiptHeightMm), phir wahi number
+     yahan likhte hain — is liye ab @page kabhi ghalat nahi hoti. */
   var RECEIPT_WIDTHS = { 80:{ margin:4 }, 54:{ margin:1.5 } };
-  function setPageRule(kind, widthMm) {
+  function setPageRule(kind, widthMm, heightMm) {
     var el = document.getElementById('pageRule');
     if (!el) {
       el = document.createElement('style');
@@ -4543,10 +4562,21 @@
     }
     if (kind === 'receipt') {
       var w = RECEIPT_WIDTHS[widthMm] ? widthMm : 80;
-      el.textContent = '@page { size: ' + w + 'mm auto; margin: 0 ' + RECEIPT_WIDTHS[w].margin + 'mm; }';
+      var h = heightMm > 0 ? heightMm : 200;   // pehli dafa napne se pehle ka andaaza
+      el.textContent = '@page { size: ' + w + 'mm ' + h + 'mm; margin: 0 ' + RECEIPT_WIDTHS[w].margin + 'mm; }';
     } else {
       el.textContent = '@page { size: A4 portrait; margin: 12mm 10mm; }';
     }
+  }
+  /* Receipt ki asal bulandi — off-screen (screen se bahar, user ko
+     kabhi nazar nahi aata) render kar ke napte hain, taake @page ko
+     bilkul sahi number diya ja sake. 2mm ka thora sa izafa taake font
+     ki barik farq se aakhri line kabhi na kati jaye. */
+  function measureReceiptHeightMm() {
+    var el = document.getElementById('receipt');
+    var px = el ? el.getBoundingClientRect().height : 0;
+    var mm = px / 96 * 25.4;                 // 96 CSS px = 1 inch = 25.4mm
+    return Math.ceil(mm) + 2;
   }
 
   function doPrint(container, filename) {
@@ -4567,8 +4597,16 @@
 
   /* Receipt ka apna print — body par "rcpt" aur "rcpt80"/"rcpt54" lagti
      hain taake A4 wali sheet chhupi rahe aur sahi chaurai ka CSS lage.
-     Print ke baad dono hamesha hat jati hain (chahe user ne print kiya
-     ho ya cancel). */
+
+     Print se theek pehle receipt off-screen (screen se bahar, .receipt
+     ki apni CSS mein hamesha yehi jagah hoti hai jab tak print na ho
+     raha ho) dikha kar us ki asal bulandi naap lete hain, phir @page ko
+     wahi number dete hain — warna Android ka print dialog "80mm auto"
+     jaisi mili-juli value nazarandaz kar ke system ke default kaghaz
+     (Letter/A4) par chala jata hai.
+
+     Print ke baad sab kuch — classes, @page — hamesha wapas apni jagah
+     (chahe user ne print kiya ho ya cancel). */
   function doPrintReceipt(filename, widthMm) {
     var w = RECEIPT_WIDTHS[widthMm] ? widthMm : 80;
     var oldTitle = document.title;
@@ -4577,15 +4615,21 @@
       catch (e) { return oldTitle; }
     })();
     setPrintTitle(filename);
-    setPageRule('receipt', w);
-    document.body.classList.add('rcpt', 'rcpt' + w);
-    window.addEventListener('afterprint', function restore() {
-      document.body.classList.remove('rcpt', 'rcpt80', 'rcpt54');
-      setPageRule('A4');
-      restorePrintTitle(oldTitle, oldTop);
-      window.removeEventListener('afterprint', restore);
-    });
-    window.print();
+    document.body.classList.add('rcpt', 'rcpt' + w);   // .receipt ab off-screen render hoti hai
+
+    function go() {
+      setPageRule('receipt', w, measureReceiptHeightMm());
+      window.addEventListener('afterprint', function restore() {
+        document.body.classList.remove('rcpt', 'rcpt80', 'rcpt54');
+        setPageRule('A4');
+        restorePrintTitle(oldTitle, oldTop);
+        window.removeEventListener('afterprint', restore);
+      });
+      window.print();
+    }
+    // Font poora load ho chuka ho tabhi naapo — warna bulandi ghalat aa sakti hai
+    if (document.fonts && document.fonts.ready) { document.fonts.ready.then(go).catch(go); }
+    else { go(); }
   }
 
   /* ---------- Delivery Challan ---------- */
