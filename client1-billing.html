@@ -564,6 +564,7 @@
 
   /* ---------- helpers ---------- */
   function fmt(n) { return (Number(n) || 0).toLocaleString('en-PK', { maximumFractionDigits:2 }); }
+  function fmtQ(n) { return (Number(n) || 0).toLocaleString('en-PK', { maximumFractionDigits:6 }); }   // stock qty: 1.005 ko 1.01 na dikhaye
   function money(n) { return (Number(n) || 0).toLocaleString('en-PK', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
   function norm(s) { return String(s == null ? '' : s).trim().toLowerCase().replace(/\s+/g, ' '); }
   /* print se pehle logo ki tasveer poori tarah load hone do — warna print preview me khali reh jati hai */
@@ -609,7 +610,13 @@
     if (!iso) return '';
     return new Date(iso + 'T00:00:00').toLocaleDateString('en-PK', { day:'2-digit', month:'short', year:'numeric' });
   }
-  function num(v) { var n = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, '')); return isFinite(n) ? n : 0; }
+  /* '1e3' pehle 'e' hata kar 13 ban jata tha — ab saaf scientific number seedha parhte hain (1e3 = 1000).
+     Baaqi sab pehle jaisa: '1,000' / 'Rs 500' se sirf number. */
+  function num(v) {
+    var s = String(v == null ? '' : v).replace(/[,\s]/g, '');
+    var n = /^[-+]?(\d+\.?\d*|\.\d+)e[-+]?\d+$/i.test(s) ? Number(s) : parseFloat(s.replace(/[^0-9.\-]/g, ''));
+    return isFinite(n) ? n : 0;
+  }
   function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 
   var toastT = null;
@@ -732,6 +739,11 @@
     ledgerReturns.forEach(function (rr) {
       if (rr.party_id !== pid) return;
       bal -= num(rr.grand_total);
+    });
+
+    ledgerServices.forEach(function (si) {
+      if (si.party_id !== pid) return;
+      bal += num(si.grand_total) - num(si.paid);
     });
 
     // ledger entries — row[6]=credit party_id, row[7]=debit party_id
@@ -1141,7 +1153,9 @@
      save hi nahi hoti (neeche unitError() rok deta hai). */
   function baseQty(l) {
     var f = (l.sale_unit ? num(l.unit_factor) : 1);
-    return round2(num(l.sale_qty) * f);
+    // 2 dp par round karne se 1.005 kg bill hota magar stock se 1.00 kg ghatta tha.
+    // Ab poora number — sirf float ka kachra (0.30000000000000004) 6 dp par saaf.
+    return Math.round(num(l.sale_qty) * f * 1e6) / 1e6;
   }
 
   /* Save se pehle janch: doosra unit chuna hai to conversion lazmi hai */
@@ -1166,7 +1180,7 @@
     var list = unitsOf(l.item_id);
     var cur  = lineUnit(l);
     var base = list[0].unit;
-    var showUnits = isSale() && list.length > 1;   // unit ka option sirf sale par
+    var showUnits = isSale() && !bill.doc && list.length > 1;   // unit ka option sirf sale BILL par (quotation_lines mein unit ke khaane nahi)
     return '<div class="ln" data-k="' + l.key + '">' +
       '<div class="top">' + pickBox('it_' + l.key, it ? it.name : '', 'Which item?') +
         '<button class="rm" data-rm="' + l.key + '" aria-label="Remove line">×</button></div>' +
@@ -1181,7 +1195,7 @@
       '<div class="qr">' +
         '<div class="f num"><label>Qty' + (cur ? ' (' + esc(cur.unit) + ')' : '') + '</label>' +
           '<input class="lq" data-k="' + l.key + '" type="text" inputmode="decimal" value="' +
-          (num(l.sale_qty) ? fmt(l.sale_qty) : '') + '" placeholder="0"></div>' +
+          (num(l.sale_qty) ? fmtQ(l.sale_qty) : '') + '" placeholder="0"></div>' +
         '<div class="f num"><label>Rate' + (cur && !cur.base ? ' / ' + esc(cur.unit) : '') + '</label>' +
           '<input class="lr" data-k="' + l.key + '" type="text" inputmode="decimal" value="' +
           (num(l.rate) ? fmt(l.rate) : '') + '" placeholder="0"></div>' +
@@ -1191,9 +1205,9 @@
         ? '<div class="f num" style="margin-top:6px"><label>1 ' + esc(cur.unit) + ' = kitne ' +
             esc(base) + '</label>' +
             '<input class="lf" data-k="' + l.key + '" type="text" inputmode="decimal" value="' +
-            (num(l.unit_factor) ? fmt(l.unit_factor) : '') + '" placeholder="0">' +
+            (num(l.unit_factor) ? fmtQ(l.unit_factor) : '') + '" placeholder="0">' +
             '<div class="hint" data-bq="' + l.key + '">' +
-              (baseQty(l) ? 'Stock se ' + fmt(baseQty(l)) + ' ' + esc(base) + ' minus hoga' : '') +
+              (baseQty(l) ? 'Stock se ' + fmtQ(baseQty(l)) + ' ' + esc(base) + ' minus hoga' : '') +
             '</div></div>'
         : '') +
       (warehouses.length > 1
@@ -1308,7 +1322,7 @@
         }
         /* Sale par is item ka default unit khud lag jaye \u2014 us ka conversion
            aur (agar rakha ho to) us ka rate bhi. User chahe to badal sakta hai. */
-        if (isSale()) {
+        if (isSale() && !bill.doc) {
           var du = defaultUnitOf(r.id);
           l.sale_unit   = du.base ? null : du.unit;
           l.unit_factor = du.factor || 1;
@@ -1332,7 +1346,7 @@
       var bq = $('edBody').querySelector('[data-bq="' + l.key + '"]');
       if (bq) {
         var base = unitsOf(l.item_id)[0].unit;
-        bq.textContent = l.qty ? 'Stock se ' + fmt(l.qty) + ' ' + base + ' minus hoga' : '';
+        bq.textContent = l.qty ? 'Stock se ' + fmtQ(l.qty) + ' ' + base + ' minus hoga' : '';
       }
       refreshSum();
     }
@@ -1641,7 +1655,10 @@
       bill.vdate = isQ ? rec.qdate : rec.podate;
     }
     bill.lines = (bill.lines || []).map(function (l) {
-      if (!l.key) l.key = 'L' + (++lineSeq); return l;
+      if (!l.key) l.key = 'L' + (++lineSeq);
+      // doc lines mein sale_qty nahi hota — editor qty usi se dikhata hai
+      if (l.sale_qty == null || l.sale_qty === '') { l.sale_qty = num(l.qty); l.sale_unit = null; l.unit_factor = 1; }
+      return l;
     });
     if (!bill.lines.length) bill.lines.push(newLine());
     originalHeadSnapshot = rec ? JSON.parse(JSON.stringify(rec)) : null;
@@ -1671,14 +1688,18 @@
     return sb.from(table).update({ subtotal:t.sub, tax_total:t.tax, grand_total:t.grand })
       .eq('id', recId).select().then(function (r3) {
         var saved = Object.assign({}, row || head, r3.data ? r3.data[0] : {}, { id:recId, lines:finalLines || [] });
+        var list = isQ ? quotes : pos;
+        if (!list.some(function (x) { return x.id === recId; })) list.push(saved);   // naya doc
         if (isQ) quotes = quotes.map(function (x) { return x.id === recId ? saved : x; });
         else pos = pos.map(function (x) { return x.id === recId ? saved : x; });
         syncNote('Saved', '#7DC9A9');
         render();
       });
   }
+  var docSaving = false;
   function saveDoc() {
     var b = bill, isQ = b.doc === 'quotation';
+    if (docSaving) return;
     if (!b.party_id) { toast('Pick a party first', true); return; }
     var good = b.lines.filter(function (l) { return l.item_id && num(l.qty) > 0; });
     if (!good.length) { toast('Add at least one item with a quantity', true); return; }
@@ -1704,67 +1725,65 @@
       head.cartage_on = !!b.cartage_on; head.cartage_amt = num(b.cartage_amt);
       head.cutting_on = !!b.cutting_on; head.cutting_amt = num(b.cutting_amt);
     }
+    /* MASLA: quotation_lines / po_lines mein sale_qty/sale_unit/unit_factor
+       khaane hain hi nahi — PGRST204 aata tha aur lines kabhi save nahi hoti thin.
+       HAL: sirf wohi khaane bhejo jo in tables mein hain (doc par unit nahi
+       chunte, is liye qty hi item ke apne unit mein hai). */
     var linesForMerge = good.map(function (l) {
-      return { id:l.id || null, item_id:l.item_id, qty:num(l.qty), sale_qty:l.sale_qty == null ? null : num(l.sale_qty),
-               sale_unit:l.sale_unit || null, unit_factor:num(l.unit_factor) || 1,
-               rate:num(l.rate),
+      return { id:l.id || null, item_id:l.item_id, qty:num(l.qty), rate:num(l.rate),
                tax_pct:num(l.tax_pct), amount:lineAmount(l),
                pcs_on:!!l.pcs_on, pcs:l.pcs_on ? num(l.pcs) : null };
     });
     var linesPayload = linesForMerge.map(function (l) { var o = Object.assign({}, l); delete o.id; return o; });
-
     var priorRow = isNew ? null : (isQ ? quotes : pos).filter(function (x) { return x.id === recId; })[0];
-    var optimistic = Object.assign({}, priorRow || {}, head, {
-      id:recId, version:isNew ? 1 : (b.version || 1),
-      lines:linesPayload.map(function (l, i) { return Object.assign({ id:'temp-' + i, line_no:i + 1 }, l); })
-    });
-    if (isQ) { if (isNew) quotes.push(optimistic); else quotes = quotes.map(function (x) { return x.id === recId ? optimistic : x; }); }
-    else { if (isNew) pos.push(optimistic); else pos = pos.map(function (x) { return x.id === recId ? optimistic : x; }); }
-    toast((isNew ? 'Saved ' : 'Updated ') + (head[noField] || (isQ ? 'quotation' : 'purchase order')));
-    closeBill(); render();
+    var label = head[noField] || (isQ ? 'quotation' : 'purchase order');
 
-    if (!navigator.onLine) {
+    // internet nahi / beech mein toot gaya — pehle jaisa: queue karo, screen par turant dikhao
+    function queueIt() {
+      var optimistic = Object.assign({}, priorRow || {}, head, {
+        id:recId, version:isNew ? 1 : (b.version || 1),
+        lines:linesPayload.map(function (l, i) { return Object.assign({ id:'temp-' + i, line_no:i + 1 }, l); })
+      });
+      if (isQ) { if (isNew) quotes.push(optimistic); else quotes = quotes.map(function (x) { return x.id === recId ? optimistic : x; }); }
+      else { if (isNew) pos.push(optimistic); else pos = pos.map(function (x) { return x.id === recId ? optimistic : x; }); }
       offQAdd({ opId:uuid(), kind:'doc', isQ:isQ, op:isNew ? 'insert' : 'update', recordId:recId,
                 baseVersion:isNew ? null : (b.version || 1), original:isNew ? null : originalHeadSnapshot,
                 head:head, lines:linesPayload, linesForMerge:isNew ? null : linesForMerge,
                 originalLines:isNew ? null : originalLineSnapshot, label:head[noField] });
-      syncNote('Offline \u2014 save queued', '#B08A3E');
-      return;
+      toast((isNew ? 'Saved ' : 'Updated ') + label);
+      closeBill(); render();
+      syncNote('Offline — save queued', '#B08A3E');
     }
+    if (!navigator.onLine) { queueIt(); return; }
 
+    /* MASLA: "Saved" toast aur editor band PEHLE hota tha, lines ka error baad
+       mein — header bina lines ke reh jata tha. HAL: toast/close sirf jab header
+       aur lines dono save ho jayein; lines na jayein to naya header wapis hatao
+       aur editor khula rakho. Edit par lines pehle (ek hi function = ek transaction),
+       phir header. */
+    docSaving = true; $('edSave').disabled = true;
     syncNote('Saving…');
-    var step = isNew ? sb.from(table).insert(Object.assign({ id:recId }, head)).select()
-                     : sb.rpc('smart_merge_update', { p_table:table, p_id:recId, p_original:originalHeadSnapshot, p_new:head });
-    step.then(function (res) {
-      if (res.error) throw res.error;
-      if (!isNew) {
-        var result = res.data;
-        if (result.status === 'conflict') {
-          /* Database conflict ke saath TAAZA row bhi bhejta hai. Usay naya
-             baseline bana dete hain, warna dobara Save dabane par wohi purana
-             baseline jata tha aur wohi conflict phir aata tha — hamesha ke liye. */
-          if (result.current) originalHeadSnapshot = JSON.parse(JSON.stringify(result.current));
-          toast('"' + head[noField] + '" mein "' + result.fields.join(', ') + '" kisi aur ne bhi isi waqt badla \u2014 aapki wo tabdeeli chhoot gayi, taaza dekh kar dobara karein', true);
-          loadAll();
-          return;
-        }
-        if (result.status === 'missing') {
-          toast('"' + head[noField] + '" kisi aur ne delete kar diya hai', true);
-          loadAll();
-          return;
-        }
-      }
-      var row = isNew ? (res.data || [])[0] : res.data.row;
-      if (isNew) {
+    var STOP = {};
+    var work;
+    if (isNew) {
+      work = sb.from(table).insert(Object.assign({ id:recId }, head)).select().then(function (res) {
+        if (res.error) throw res.error;
+        var row = (res.data || [])[0];
         var payload = linesPayload.map(function (l, i) {
           var o = Object.assign({ line_no:i + 1 }, l); o[fkCol] = recId; return o;
         });
         return sb.from(lineTable).insert(payload).select().then(function (r2) {
-          if (r2.error) throw r2.error;
-          return finishDocSave(row, r2.data, recId, head, t, table, noField, isQ);
+          if (!r2.error) return finishDocSave(row, r2.data, recId, head, t, table, noField, isQ);
+          if (isNetErr(r2.error)) throw r2.error;   // queue retry header (duplicate) ke baad lines daal deta hai
+          // khali header mat chhoro: delete (admin), warna Recycle Bin
+          return sb.from(table).delete().eq('id', recId).select('id').then(function (d) {
+            if (!d.error && d.data && d.data.length) return;
+            return sb.from(table).update({ deleted_at:new Date().toISOString() }).eq('id', recId);
+          }).then(function () { throw r2.error; }, function () { throw r2.error; });
         });
-      }
-      return sb.rpc('smart_merge_lines', {
+      });
+    } else {
+      work = sb.rpc('smart_merge_lines', {
         p_line_table:lineTable, p_fk_col:fkCol, p_fk_id:recId,
         p_original_lines:originalLineSnapshot, p_new_lines:linesForMerge,
         p_ignore_fields:[fkCol, 'line_no']
@@ -1772,37 +1791,50 @@
         if (mr.error) throw mr.error;
         if (mr.data.status === 'conflict') {
           var names = mr.data.items.map(function (id) { var it = itemById(id); return it ? it.name : id; });
-          toast('"' + head[noField] + '" mein "' + names.join(', ') + '" kisi aur ne bhi isi waqt badla \u2014 taaza dekh kar dobara karein', true);
+          toast('"' + head[noField] + '" mein "' + names.join(', ') + '" kisi aur ne bhi isi waqt badla — taaza dekh kar dobara karein', true);
           loadAll();
-          return null;
+          return STOP;
         }
         return sb.rpc('apply_merged_lines', {
           p_line_table:lineTable, p_fk_col:fkCol, p_fk_id:recId, p_final_lines:mr.data.lines
         }).then(function (ar) {
           if (ar.error) throw ar.error;
-          return fetch_lines(lineTable, fkCol, recId).then(function (finalLines) {
-            var recomputedT = totalsFromLines(finalLines, b);
-            return finishDocSave(row, finalLines, recId, head, recomputedT, table, noField, isQ);
-          });
+          return fetch_lines(lineTable, fkCol, recId);
+        });
+      }).then(function (finalLines) {
+        if (finalLines === STOP) return STOP;
+        var recomputedT = totalsFromLines(finalLines, b);
+        return sb.rpc('smart_merge_update', { p_table:table, p_id:recId, p_original:originalHeadSnapshot, p_new:head }).then(function (res) {
+          if (res.error) throw res.error;
+          var result = res.data;
+          if (result.status === 'conflict') {
+            /* Database conflict ke saath TAAZA row bhi bhejta hai. Usay naya
+               baseline bana dete hain, warna dobara Save dabane par wohi purana
+               baseline jata tha aur wohi conflict phir aata tha — hamesha ke liye. */
+            if (result.current) originalHeadSnapshot = JSON.parse(JSON.stringify(result.current));
+            toast('"' + head[noField] + '" mein "' + result.fields.join(', ') + '" kisi aur ne bhi isi waqt badla — aapki wo tabdeeli chhoot gayi, taaza dekh kar dobara karein', true);
+            // lines save ho chuki hain — header ka total unhi se
+            return finishDocSave(result.current, finalLines, recId, head, recomputedT, table, noField, isQ)
+              .then(function () { loadAll(); return STOP; });
+          }
+          if (result.status === 'missing') {
+            toast('"' + head[noField] + '" kisi aur ne delete kar diya hai', true);
+            loadAll();
+            return STOP;
+          }
+          return finishDocSave(result.row, finalLines, recId, head, recomputedT, table, noField, isQ);
         });
       });
+    }
+    work.then(function (r) {
+      docSaving = false; $('edSave').disabled = false;
+      if (r === STOP) return;
+      toast((isNew ? 'Saved ' : 'Updated ') + label);
+      closeBill(); render();
     }).catch(function (e) {
-      if (isNetErr(e)) {
-        offQAdd({ opId:uuid(), kind:'doc', isQ:isQ, op:isNew ? 'insert' : 'update', recordId:recId,
-                  baseVersion:isNew ? null : (b.version || 1), original:isNew ? null : originalHeadSnapshot,
-                  head:head, lines:linesPayload, linesForMerge:isNew ? null : linesForMerge,
-                  originalLines:isNew ? null : originalLineSnapshot, label:head[noField] });
-        syncNote('Offline \u2014 save queued', '#B08A3E');
-      } else {
-        if (isQ) {
-          if (isNew) quotes = quotes.filter(function (x) { return x.id !== recId; });
-          else quotes = quotes.map(function (x) { return x.id === recId ? priorRow : x; });
-        } else {
-          if (isNew) pos = pos.filter(function (x) { return x.id !== recId; });
-          else pos = pos.map(function (x) { return x.id === recId ? priorRow : x; });
-        }
-        render(); syncNote(''); sayErr(e, 'save');
-      }
+      docSaving = false; $('edSave').disabled = false;
+      if (isNetErr(e)) { queueIt(); return; }
+      syncNote(''); sayErr(e, 'save');   // editor khula — user ka kaam mehfooz
     });
   }
   function deleteDoc() {
@@ -2691,6 +2723,7 @@
   /* ---------- cloud ---------- */
   var sheets = [];          // ledger sheets — party balance ke liye zaroori
   var ledgerVouchers = [];  // party balance ke liye — 'bills' se alag (jo sirf recent 600 hai)
+  var ledgerServices = [];  // party balance ke liye — service invoices (sale ki tarah)
   var ledgerReturns = [];   // party balance ke liye — sales returns bhi customer ka balance ghataate hain
   var lockDate = null, snapshotActive = false, openingBalances = {};
 
@@ -2792,6 +2825,10 @@
     var table = op.isQ ? 'quotations' : 'purchase_orders';
     var lineTable = op.isQ ? 'quotation_lines' : 'po_lines';
     var fkCol = op.isQ ? 'quotation_id' : 'po_id';
+    // purani queue (fix se pehle ki) mein yeh khaane hain jo doc lines mein nahi — hata do
+    [op.lines, op.linesForMerge].forEach(function (arr) {
+      (arr || []).forEach(function (l) { delete l.sale_qty; delete l.sale_unit; delete l.unit_factor; });
+    });
     if (op.op === 'delete') {
       return sb.from(table).update({ deleted_at:new Date().toISOString() }).eq('id', op.recordId)
         .then(function (res) { if (res.error) throw res.error; return 'ok'; });
@@ -2972,12 +3009,17 @@
         if (active) obRows.forEach(function (r) { ob[r.party_id] = num(r.balance); });
 
         var ledgerVoucherQuery = sb.from('vouchers').select('id,party_id,vdate,vtype,grand_total,paid').is('deleted_at', null);
-        var ledgerSheetQuery   = sb.from('sheets').select('sheet_date,rows');
+        // delete ki hui sheet balance mein nahi ginni (Masters ki tarah)
+        var ledgerSheetQuery   = sb.from('sheets').select('sheet_date,rows').is('deleted_at', null);
         var ledgerReturnQuery  = sb.from('sales_returns').select('grand_total,party_id,rdate').is('deleted_at', null);
+        // Service Invoice (cutting ka bill) bhi party ka baqaya hai — Masters ledger / Trial Balance isay ginte hain
+        var ledgerServiceQuery = sb.from('service_invoices').select('party_id,sidate,grand_total,paid')
+                                   .is('deleted_at', null).neq('status', 'cancelled');
         if (active) {
           ledgerVoucherQuery = ledgerVoucherQuery.gte('vdate', ld);
           ledgerSheetQuery   = ledgerSheetQuery.gte('sheet_date', ld);
           ledgerReturnQuery  = ledgerReturnQuery.gte('rdate', ld);
+          ledgerServiceQuery = ledgerServiceQuery.gte('sidate', ld);
         }
 
         return Promise.all([
@@ -3009,7 +3051,8 @@
           sb.from('stock_transfers').select('*').is('deleted_at', null).order('tdate', { ascending:false }).limit(300),
           sb.from('stock_transfer_lines').select('*'),
           // aakhir mein — beech mein daalne se baqi ke index khisak jate hain
-          sb.from('item_units').select('*').order('line_no')
+          sb.from('item_units').select('*').order('line_no'),
+          ledgerServiceQuery
         ]).then(function (r) {
           r.slice(0, 4).forEach(function (x) { if (x.error) throw x.error; });
           parties = r[0].data || [];
@@ -3046,6 +3089,7 @@
           var byR = {}; (r[14].error ? [] : (r[14].data || [])).forEach(function (l) { (byR[l.return_id] = byR[l.return_id] || []).push(l); });
           returns.forEach(function (rr) { rr.lines = (byR[rr.id] || []).sort(function (a, c) { return (a.line_no || 0) - (c.line_no || 0); }); });
           ledgerReturns = r[15].error ? [] : (r[15].data || []);
+          ledgerServices = r[20] && !r[20].error ? (r[20].data || []) : [];   // SQL na chali ho to bhi bill bane
 
           // lock set hai lekin snapshot missing/stale mile — masters.html khud theek kar lega
           // agli baar wahan se khula jaye; yahan billing.html mein sirf safe fallback kaafi hai
@@ -3217,6 +3261,10 @@
 
   /* ---------- gates ---------- */
   function showErr(id, msg) { var el = $(id); el.textContent = msg; el.classList.toggle('on', !!msg); }
+  // purani (JWT) service key mein "service_role" base64 mein chhupa hota hai — app-config payload khol kar dekhta hai
+  function isSecretKey(key) {
+    return window.APP_CONFIG.isSecretKey ? window.APP_CONFIG.isSecretKey(key) : /service_role|^sb_secret/i.test(key);
+  }
   function makeClient(url, key) {
     return window.supabase.createClient(url, key, {
       auth: { persistSession:true, autoRefreshToken:false }
@@ -3227,7 +3275,7 @@
     showErr('cErr', '');
     if (!/^https:\/\/.+/.test(url)) { showErr('cErr', 'The URL should start with https://'); return; }
     if (!key) { showErr('cErr', 'Paste the publishable (anon) key.'); return; }
-    if (/service_role|^sb_secret/i.test(key)) { showErr('cErr', 'That is the secret key. Use the publishable (anon) key.'); return; }
+    if (isSecretKey(key)) { showErr('cErr', 'That is the secret key. Use the publishable (anon) key.'); return; }
     $('cGo').disabled = true; $('cGo').textContent = 'Connecting…';
     try { sb = makeClient(url, key); } catch (e) {
       $('cGo').disabled = false; $('cGo').textContent = 'Connect';
@@ -3464,6 +3512,8 @@
     if (!raw) { $('gateConnect').classList.add('on'); return; }
     var cfg; try { cfg = JSON.parse(raw); } catch (e) { cfg = null; }
     if (!cfg || !cfg.url || !cfg.key) { $('gateConnect').classList.add('on'); return; }
+    // pehle se save hui secret key se app RLS ke baghair chalti — dobara Connect karwao
+    if (isSecretKey(cfg.key)) { $('gateConnect').classList.add('on'); showErr('cErr', 'That is the secret key. Use the publishable (anon) key.'); return; }
     try { sb = makeClient(cfg.url, cfg.key); } catch (e) { $('gateConnect').classList.add('on'); return; }
     $('gateConnect').classList.remove('on'); afterConnect();
   })();
