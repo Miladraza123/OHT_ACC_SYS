@@ -1051,6 +1051,41 @@ end;
 $function$;
 
 
+-- ---------- Return ki tareekh sale se pehle nahi ----------
+--  MASLA: 08-Oct ki sale ka return 05-Oct ki tareekh par ban jata tha.
+--  Costing usay sale se pehle ginti hai (maal aane se pehle wapas aaya)
+--  aur party ka statement sale se pehle Cr dikhata hai.
+--  HAL: nayi return, ya tareekh/sale badalne par: rdate >= sale ki vdate.
+--  Purani rows ko nahi chherta jab tak un ki tareekh/sale na badle.
+
+create or replace function public.trg_return_not_before_sale()
+returns trigger
+language plpgsql
+set search_path = public
+as $function$
+declare
+  sale_d date;
+begin
+  if NEW.sale_id is null then return NEW; end if;
+  if TG_OP = 'UPDATE' and NEW.rdate is not distinct from OLD.rdate
+     and NEW.sale_id is not distinct from OLD.sale_id then
+    return NEW;
+  end if;
+  select vdate into sale_d from vouchers where id = NEW.sale_id;
+  if sale_d is not null and NEW.rdate < sale_d then
+    raise exception 'Return ki tareekh (%) sale ki tareekh (%) se pehle nahi ho sakti', NEW.rdate, sale_d;
+  end if;
+  return NEW;
+end;
+$function$;
+
+drop trigger if exists trg_return_not_before_sale on sales_returns;
+create trigger trg_return_not_before_sale before insert or update on sales_returns
+  for each row execute function public.trg_return_not_before_sale();
+
+revoke all on function public.trg_return_not_before_sale() from public, anon, authenticated;
+
+
 -- ============================================================
 --  HISSA 5b — Receivable Aging (receivable_aging + aging_reconcile)
 --
@@ -1240,7 +1275,7 @@ $function$;
 
 
 -- ============================================================
---  HISSA 5b — Merge mein number ko number ki tarah milana
+--  HISSA 5c — Merge mein number ko number ki tarah milana
 --
 --  MASLA: merge_diff / merge_one_line (db/08) har value ko TEXT bana kar
 --  milati hain. Ab line ka amount server par 2 decimal mein banta hai
