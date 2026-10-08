@@ -11,7 +11,11 @@
 //   SUPABASE_URL         - jaisa masters.html mein use hoti hai
 //   SUPABASE_ANON_KEY    - jaisa masters.html mein use hoti hai
 //   BACKUP_EMAIL         - wahi email jisse aap masters.html mein "Sign in" karte hain
+//                          (ADMIN user hona chahiye — warna RLS data chhupa deti hai
+//                           aur backup ⚠ ADHOORA aata hai)
 //   BACKUP_PASSWORD      - wahi password
+//   SUPABASE_SERVICE_KEY - (ikhtiyari) service_role / sb_secret_ key. Ho to login ki
+//                          zaroorat nahi aur RLS beech mein nahi aati.
 //   GMAIL_USER           - jis Gmail se bhejna hai
 //   GMAIL_APP_PASSWORD   - Gmail ka "App Password"
 //   BACKUP_TO_EMAIL      - jahan backup email jani hai
@@ -20,36 +24,98 @@ const { createClient } = require('@supabase/supabase-js');
 const ExcelJS = require('exceljs');
 const nodemailer = require('nodemailer');
 
-const sb = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_ANON_KEY);
+const KEY = process.env.SUPABASE_SERVICE_KEY || process.env.SUPABASE_ANON_KEY;
+const sb = createClient(process.env.SUPABASE_URL, KEY, { auth: { persistSession: false } });
+
+/* Key kis qism ki hai? Purani keys JWT hain — role payload mein base64 ke andar. */
+function keyRole(k) {
+  k = String(k || '').trim();
+  if (/^sb_secret_/i.test(k)) return 'service_role';
+  if (/^sb_publishable_/i.test(k)) return 'anon';
+  const p = k.split('.');
+  if (p.length !== 3) return 'unknown';
+  try { return JSON.parse(Buffer.from(p[1], 'base64url').toString('utf8')).role || 'unknown'; }
+  catch (e) { return 'unknown'; }
+}
+const FULL_KEY = keyRole(KEY) === 'service_role';
+
+/* Poori ijazat hai ya nahi. Service key ho to RLS beech mein nahi aati. Warna
+   login wala user ACTIVE ADMIN hona chahiye — limited user ko RLS khali/adhoori
+   tables deti hai bina kisi error ke, aur file "poori" lagti thi. */
+let accessOk = true, accessNote = '';
 
 async function signIn() {
+  if (FULL_KEY) { accessNote = 'service key (RLS ke baghair)'; return; }
   var res = await sb.auth.signInWithPassword({
     email: process.env.BACKUP_EMAIL,
     password: process.env.BACKUP_PASSWORD
   });
   if (res.error) throw new Error('Sign-in failed: ' + res.error.message);
+  const uid = res.data && res.data.user && res.data.user.id;
+  const me = await sb.from('app_users').select('username,is_admin,is_active').eq('id', uid).maybeSingle();
+  if (me.error || !me.data || !me.data.is_admin || !me.data.is_active) {
+    accessOk = false;
+    accessNote = 'Backup wala login (' + process.env.BACKUP_EMAIL + ') active ADMIN nahi hai \u2014 ' +
+                 'RLS ne jo tables chhupa di hon wo file mein khali/adhoori hain.';
+    missed.push('(ijazat) \u2014 ' + accessNote);
+  } else {
+    accessNote = 'admin login: ' + me.data.username + ' (key: ' + keyRole(KEY) + ')';
+  }
 }
 
 /* Jo tables kisi wajah se na mil sakin, un ka record — email mein saaf
    likh diya jata hai taake pata rahe ke file mein kya nahi hai. */
 const missed = [];
+const missedTables = [];
+const dbCounts = {};
+
+/* Supabase ek request mein zyada se zyada 1000 rows deta hai (max-rows) — baqi
+   chup-chaap kat jati thin. Ab panna-panna (range) parhte hain jab tak khali panna
+   na aaye, aur database ki apni ginti (count exact) se milate hain. Farq = adhoori. */
+const PAGE = 1000;
+const PK = { party_opening_balances: 'party_id', item_cost_snapshot: 'item_id' };
+
+async function readTable(t, cols) {
+  const c = await sb.from(t).select('*', { count: 'exact', head: true });
+  if (c.error) throw new Error(c.error.message);
+  dbCounts[t] = c.count;
+  let rows = [];
+  for (;;) {
+    const { data, error } = await sb.from(t).select(cols || '*').order(PK[t] || 'id')
+                                     .range(rows.length, rows.length + PAGE - 1);
+    if (error) throw new Error(error.message);
+    if (!data || !data.length) break;
+    rows = rows.concat(data);
+    if (c.count != null && rows.length >= c.count) break;
+  }
+  if (c.count != null && rows.length !== c.count) {
+    const e = new Error('sirf ' + rows.length + ' rows aayin, database mein ' + c.count + ' hain');
+    e.partial = rows;
+    throw e;
+  }
+  return rows;
+}
 
 async function fetchAll() {
   // Restore ke liye HAR table chahiye — warna file se system wapas nahi aata
   const out = {};
-  for (const t of RESTORE_ORDER) {
-    const { data, error } = await sb.from(t).select('*');
-    /* Pehle yahan seedha throw tha. Ek table ka naam badal jata, ya us ki
-       RLS policy badal jati, to us raat ka backup POORA zaya ho jata —
-       adhoora nahi, bilkul nahi banta. Ab baqi tables file mein aa jati
-       hain aur nuqsan email mein likh diya jata hai. */
-    if (error) { missed.push(t + ' — ' + error.message); out[t] = []; continue; }
-    out[t] = data || [];
+  for (const t of RESTORE_ORDER.concat(EXTRA_TABLES)) {
+    try {
+      out[t] = await readTable(t, EXTRA_COLS[t]);
+    } catch (e) {
+      /* Pehle yahan seedha throw tha. Ek table ka naam badal jata, ya us ki
+         RLS policy badal jati, to us raat ka backup POORA zaya ho jata —
+         adhoora nahi, bilkul nahi banta. Ab baqi tables file mein aa jati
+         hain aur nuqsan email mein likh diya jata hai. */
+      missed.push(t + ' \u2014 ' + e.message);
+      missedTables.push(t);
+      out[t] = e.partial || [];
+    }
   }
   /* Haan, agar ek bhi table na mile to yeh asal kharabi hai (login ya
      connection) — us par backup rukna hi chahiye, taake khali file
      purani sahi file ki jagah na le le. */
-  if (missed.length === RESTORE_ORDER.length) {
+  if (RESTORE_ORDER.every(function (t) { return missedTables.indexOf(t) > -1; })) {
     throw new Error('Ek bhi table nahi mili (' + missed.length + ') — login ya connection ka masla. ' +
                     'Pehli ghalti: ' + missed[0]);
   }
@@ -91,11 +157,14 @@ function karachiParts() {
   return { y: g('year'), m: g('month'), d: g('day'), hh: g('hour'), mm: g('minute') };
 }
 
-/* Jis din ka data hai — chalne wale din se ek din pehle */
+/* Jis din ka data hai. Raat/subah wala SCHEDULED run pichle din ka data
+   leta hai — us par kal ki tareekh. Haath se (din mein) chalaya to aaj tak
+   ka data hai — us par aaj ki Karachi tareekh, warna aaj ki entries kal ke
+   naam se chhap jati thin. */
 function dataDate() {
   const p = karachiParts();
   const d = new Date(Date.UTC(+p.y, +p.m - 1, +p.d));
-  d.setUTCDate(d.getUTCDate() - 1);
+  if (process.env.GITHUB_EVENT_NAME === 'schedule') d.setUTCDate(d.getUTCDate() - 1);
   return d.toISOString().slice(0, 10);
 }
 
@@ -105,6 +174,12 @@ function takenAtText() {
   const MON = ['January','February','March','April','May','June',
                'July','August','September','October','November','December'];
   return (+p.d) + ' ' + MON[+p.m - 1] + ' ' + p.y + ', ' + p.hh + ':' + p.mm + ' (Karachi)';
+}
+
+/* Database ke clean_num jaisa: "5,000" / "Rs 5000" bhi number ban jaye (pehle NaN) */
+function cn(v) {
+  var x = parseFloat(String(v == null ? '' : v).replace(/[^0-9.\-]/g, ''));
+  return isFinite(x) ? x : 0;
 }
 
 function fmt2(v) {
@@ -184,8 +259,8 @@ async function buildExcel(data) {
     var ds = sh.sheet_date ? new Date(sh.sheet_date + 'T00:00:00').toLocaleDateString('en-PK', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
     setCell(wsL, rowL, 1, sh.firm || 'Daily Register', { title: true });
     setCell(wsL, rowL, 4, 'Date: ' + ds, { bold: true, align: 'right' });
-    if (sh.opening && Number(sh.opening)) {
-      setCell(wsL, rowL, 6, 'Opening: ' + Number(sh.opening).toLocaleString('en-PK') + ' ' + (sh.side || 'Cr').toUpperCase(), { bold: true, align: 'right' });
+    if (cn(sh.opening)) {
+      setCell(wsL, rowL, 6, 'Opening: ' + cn(sh.opening).toLocaleString('en-PK') + ' ' + (sh.side || 'Cr').toUpperCase(), { bold: true, align: 'right' });
     }
     rowL++;
     setCell(wsL, rowL, 1, 'CREDIT', { header: true, fg: CR_BG, color: CR_C, align: 'center' });
@@ -198,8 +273,8 @@ async function buildExcel(data) {
     var crTot = 0, drTot = 0;
     (sh.rows || []).forEach(function (row) {
       if (!row || row.every(function (c) { return !c; })) return;
-      var ca = Number(String(row[2] || '').replace(/,/g, '')) || 0, cp = row[3] || '';
-      var da = Number(String(row[0] || '').replace(/,/g, '')) || 0, dp = row[1] || '';
+      var ca = cn(row[2]), cp = row[3] || '';
+      var da = cn(row[0]), dp = row[1] || '';
       crTot += ca; drTot += da;
       setCell(wsL, rowL, 1, row[4] ? '\u2713' : '', { color: CR_C, align: 'center', border: true });
       setCell(wsL, rowL, 2, ca || '', { bold: !!ca, color: ca ? CR_C : INK, align: 'right', border: true, numFmt: ca ? INT_FMT : undefined });
@@ -219,19 +294,36 @@ async function buildExcel(data) {
   wsL.getColumn(4).width = 6; wsL.getColumn(5).width = 14; wsL.getColumn(6).width = 28;
 
   /* ─── SHEET 2: ACCOUNT ─── */
+  /* Daily ledger ki cash entries bhi party ke khate mein — bilkul trial_balance()
+     ki tarah: row[6] = credit party (paisa aaya, row[2] ghatta hai),
+     row[7] = debit party (paisa gaya, row[0] barhta hai). Pehle yeh chhoot jati
+     thin, is liye Account sheet app ke balance se nahi milti thi. */
+  const cashBy = {};
+  S.forEach(function (sh) {
+    (sh.rows || []).forEach(function (row) {
+      if (!row) return;
+      var cp = row[6] ? String(row[6]) : '', dp = row[7] ? String(row[7]) : '';
+      var a = cn(row[2]), b = cn(row[0]);
+      if (cp && a) (cashBy[cp] = cashBy[cp] || []).push({ d: sh.sheet_date || '', t: 'Received' + (row[3] ? ' \u2014 ' + String(row[3]).trim() : ''),
+                                                    dr: 0, cr: a, delta: -a, col: null });
+      if (dp && b) (cashBy[dp] = cashBy[dp] || []).push({ d: sh.sheet_date || '', t: 'Paid' + (row[1] ? ' \u2014 ' + String(row[1]).trim() : ''),
+                                                    dr: b, cr: 0, delta: b, col: null });
+    });
+  });
   const wsA = wb.addWorksheet('Account');
   var rowA = 1;
   P.forEach(function (p) {
     var pB = V.filter(function (v) { return v.party_id === p.id; });
     var pR = RT.filter(function (x) { return x.party_id === p.id; });
     var pS = SI.filter(function (x) { return x.party_id === p.id; });
-    if (!pB.length && !pR.length && !pS.length && !Number(p.opening)) return;
+    var pC = cashBy[String(p.id)] || [];
+    if (!pB.length && !pR.length && !pS.length && !pC.length && !cn(p.opening)) return;
     setCell(wsA, rowA, 1, p.name + (p.city ? '  \u2014  ' + p.city : ''), { title: true }); rowA++;
     ['Date', 'Particulars', 'Debit', 'Credit', 'Balance'].forEach(function (h, i) {
       setCell(wsA, rowA, i + 1, h, { header: true, color: MUTE, align: i >= 2 ? 'right' : 'left' });
     }); rowA++;
-    var bal = (p.opening_side === 'dr' ? 1 : -1) * (Number(p.opening) || 0);
-    if (Number(p.opening)) {
+    var bal = (p.opening_side === 'dr' ? 1 : -1) * cn(p.opening);
+    if (cn(p.opening)) {
       setCell(wsA, rowA, 2, 'Balance brought forward', { color: MUTE, border: true });
       setCell(wsA, rowA, 5, Math.abs(bal).toLocaleString('en-PK') + (bal > 0 ? ' Dr' : ' Cr'), { bold: true, align: 'right', border: true });
       rowA++;
@@ -239,23 +331,25 @@ async function buildExcel(data) {
     /* Party ke ledger mein teen qism ki entries aati hain \u2014 bill, sales
        return, aur service invoice. Sab ko tareekh ke hisaab se ek hi qatar
        mein lagate hain, taake statement app ke ledger se bilkul mile. */
-    var ev = [];
+    var ev = pC.slice();
     pB.forEach(function (v) {
-      var g = Number(v.grand_total) || 0, pd = Number(v.paid) || 0;
+      var g = cn(v.grand_total), pd = cn(v.paid), sale = v.vtype === 'sale';
       var lns = (linesByV[v.id] || []).length;
       ev.push({ d: v.vdate || '',
-                t: (v.vtype === 'sale' ? 'Sale ' : 'Purchase ') + v.vno + ' \u2014 ' +
+                t: (sale ? 'Sale ' : 'Purchase ') + v.vno + ' \u2014 ' +
                    (partyName[v.party_id] || '') + ' (' + lns + ' item' + (lns !== 1 ? 's' : '') + ')',
-                dr: v.vtype === 'sale' ? g : 0, cr: v.vtype === 'purchase' ? g : 0,
-                delta: (v.vtype === 'sale' ? (g - pd) : -(g - pd)), col: null });
+                dr: sale ? g : 0, cr: sale ? 0 : g, delta: sale ? g : -g, col: null });
+      // bill ke saath jo paisa mila/diya — alag line, taake Debit/Credit ka jama balance se mile
+      if (pd) ev.push({ d: v.vdate || '', t: (sale ? 'Received with ' : 'Paid with ') + v.vno,
+                        dr: sale ? 0 : pd, cr: sale ? pd : 0, delta: sale ? -pd : pd, col: null });
     });
     pR.forEach(function (rr) {
-      var g = Number(rr.grand_total) || 0;
+      var g = cn(rr.grand_total);
       ev.push({ d: rr.rdate || '', t: 'Sales Return ' + (rr.rno || ''),
                 dr: 0, cr: g, delta: -g, col: null });
     });
     pS.forEach(function (si) {
-      var g = Number(si.grand_total) || 0, pd = Number(si.paid) || 0;
+      var g = cn(si.grand_total), pd = cn(si.paid);
       ev.push({ d: si.sidate || '',
                 t: 'Service Invoice ' + (si.sino || '') +
                    (si.narration ? ' \u2014 ' + si.narration : ' \u2014 Processing charges'),
@@ -266,7 +360,7 @@ async function buildExcel(data) {
     ev.sort(function (a, b) { return (a.d || '') < (b.d || '') ? -1 : ((a.d || '') > (b.d || '') ? 1 : 0); });
 
     ev.forEach(function (e) {
-      bal += e.delta;
+      bal = Math.round((bal + e.delta) * 100) / 100;
       setCell(wsA, rowA, 1, e.d, { border: true });
       setCell(wsA, rowA, 2, e.t, { border: true, color: e.col || INK });
       setCell(wsA, rowA, 3, e.dr || '', { bold: !!e.dr, color: e.col || DR_C, align: 'right', border: true, numFmt: e.dr ? INT_FMT : undefined });
@@ -490,7 +584,7 @@ function buildRestoreJson(data) {
   /* Har table mein kitni rows thin — file adhoori utri ho to isi se pata
      chalta hai. Restore se pehle milaan kar lena aasan ho jata hai. */
   const counts = {};
-  RESTORE_ORDER.forEach(function (t) { counts[t] = (data[t] || []).length; });
+  RESTORE_ORDER.concat(EXTRA_TABLES).forEach(function (t) { counts[t] = (data[t] || []).length; });
 
   return Buffer.from(JSON.stringify({
     format: 'qtc-restore',
@@ -503,7 +597,13 @@ function buildRestoreJson(data) {
     order: RESTORE_ORDER,
     // Jo tables na mil sakin (khali list ka matlab: sab kuch aa gaya)
     missed: missed,
+    missed_tables: missedTables,          // Restore inhein Replace mein haath nahi lagata
+    access_ok: accessOk,                  // false = limited login, har table adhoori ho sakti hai
+    access: accessNote,
     counts: counts,
+    db_counts: dbCounts,                  // database ki apni ginti (count exact)
+    // Sirf record ke liye — "order" mein nahi, is liye Restore inhein nahi chhoota
+    extra: EXTRA_TABLES,
     tables: data
   }), 'utf8');
 }
@@ -528,6 +628,12 @@ const RESTORE_ORDER = [
   'stock_conversions', 'stock_conversion_inputs', 'stock_conversion_outputs'
 ];
 
+/* Restore mein nahi jatin (users ka login file mein hota hi nahi; balances aur
+   cost dobara calculate hote hain; audit tareekh hai) — magar file mein hon,
+   taake zaroorat pade to dekh sakein ke kya tha. app_users ke sirf yeh columns. */
+const EXTRA_TABLES = ['party_opening_balances', 'item_cost_snapshot', 'app_users', 'audit_log'];
+const EXTRA_COLS = { app_users: 'id,username,perms,is_admin,is_active' };
+
 async function sendEmail(buffer, filename, jsonBuffer, jsonName) {
   const transporter = nodemailer.createTransport({
     service: 'gmail',
@@ -538,9 +644,14 @@ async function sendEmail(buffer, filename, jsonBuffer, jsonName) {
     to: process.env.BACKUP_TO_EMAIL,
     subject: (missed.length ? '\u26a0 ADHOORA \u2014 ' : '') + 'QTC Daily Backup \u2014 ' + dataDate(),
     text: 'Backup liya gaya: ' + takenAtText() + '\n' +
-          'Data is tareekh tak ka: ' + dataDate() + '\n\n' +
+          'Data is tareekh tak ka: ' + dataDate() + '\n' +
+          'Kis ijazat se: ' + accessNote + '\n\n' +
+          (!accessOk
+            ? '\u26a0\u26a0 BACKUP ADHOORA HAI \u2014 ' + accessNote + '\n' +
+              'GitHub secrets mein BACKUP_EMAIL ko admin user banayein, ya SUPABASE_SERVICE_KEY dein.\n\n'
+            : '') +
           (missed.length
-            ? '\u26a0 DHYAN DEIN \u2014 ' + missed.length + ' table is file mein NAHI aa saki:\n' +
+            ? '\u26a0 DHYAN DEIN \u2014 yeh ' + missed.length + ' cheez(ein) is file mein poori NAHI aa sakin:\n' +
               missed.map(function (m) { return '   \u2022 ' + m; }).join('\n') + '\n\n' +
               'Baqi sab data file mein mehfooz hai. Ooper likhi tables ka data is file\n' +
               'se wapas NAHI aayega. Ye masla jald hal karwa lein.\n\n'
@@ -572,7 +683,7 @@ async function main() {
   console.log('Backup emailed: ' + filename + ' + ' + jsonName +
               ' (' + Math.round(jsonBuffer.length / 1024) + ' KB)');
   if (missed.length) {
-    console.warn('DHYAN DEIN — ' + missed.length + ' table nahi mil saki:');
+    console.warn('DHYAN DEIN — ' + missed.length + ' cheez(ein) poori nahi mil sakin:');
     missed.forEach(function (m) { console.warn('  • ' + m); });
     /* Workflow ko laal kar dete hain. Email to chali gayi hai (adhoori hi
        sahi), magar GitHub par bhi nazar aana chahiye ke kuch theek nahi. */

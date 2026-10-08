@@ -1971,7 +1971,7 @@
   function computeAndSaveOpeningBalances(lockDateValue) {
     return Promise.all([
       sb.from('vouchers').select('party_id,vdate,vtype,grand_total,paid').is('deleted_at', null),
-      sb.from('sheets').select('sheet_date,rows'),
+      sb.from('sheets').select('sheet_date,rows').is('deleted_at', null),   // hati hui sheet balance mein na gine
       sb.from('sales_returns').select('party_id,rdate,grand_total').is('deleted_at', null),
       sb.from('service_invoices').select('party_id,sidate,grand_total,paid').is('deleted_at', null).neq('status', 'cancelled')
     ]).then(function (r) {
@@ -2022,7 +2022,7 @@
         });
 
         var voucherQuery = sb.from('vouchers').select('*').is('deleted_at', null);
-        var sheetQuery   = sb.from('sheets').select('sheet_date,rows');
+        var sheetQuery   = sb.from('sheets').select('sheet_date,rows').is('deleted_at', null);   // hati hui sheet nahi
         var returnQuery  = sb.from('sales_returns').select('*').is('deleted_at', null);
         // Service Invoice bhi usi party ledger ka hissa hai
         var serviceQuery = sb.from('service_invoices').select('*')
@@ -2133,7 +2133,7 @@
     Promise.all([
       sb.from('vouchers').select('*').is('deleted_at', null),
       sb.from('voucher_lines').select('*'),
-      sb.from('sheets').select('sheet_date,rows'),
+      sb.from('sheets').select('sheet_date,rows').is('deleted_at', null),
       sb.from('sales_returns').select('*').is('deleted_at', null),
       sb.from('service_invoices').select('*').is('deleted_at', null).neq('status', 'cancelled')
     ]).then(function (r) {
@@ -4429,30 +4429,101 @@
     });
   }
 
+  /* Supabase ek request mein 1000 se zyada rows nahi deta — chup-chaap kaat deta hai.
+     Is liye 1000-1000 ke panne, jab tak chhota panna na aa jaye. */
+  var RS_PK = { party_opening_balances:'party_id', item_cost_snapshot:'item_id' };
+  function selectAll(t, cols) {
+    var out = [];
+    function page(from) {
+      return sb.from(t).select(cols).order(RS_PK[t] || 'id').range(from, from + 999).then(function (r) {
+        if (r.error) return r;
+        out = out.concat(r.data || []);
+        return (r.data || []).length < 1000 ? { data:out, error:null } : page(from + 1000);
+      });
+    }
+    return page(0);
+  }
+
+  /* Yeh tables file mein sirf record ke liye hain — restore inhein nahi chhoota:
+       app_users  — login (auth) file mein hota hi nahi; user Users screen se dobara banein,
+                    warna kisi ki ijazat/admin chup-chaap badal jaye
+       audit_log  — tareekh hai, wapas likhne se jhooti history banti hai
+       item_cost_snapshot, party_opening_balances — hisaab se bante hain; restore ke
+                    baad dobara calculate hote hain */
+  var RS_SKIP = { app_users:1, audit_log:1, item_cost_snapshot:1, party_opening_balances:1 };
+
+  /* Backup ke waqt jo tables poori nahi aayin (file ka "missed"). Replace in par
+     chala to database ki asal rows urh jatin — is liye in ko haath nahi lagta. */
+  function rsMissed(j) {
+    var set = {};
+    (j.missed_tables || []).forEach(function (t) { set[t] = 1; });
+    (j.missed || []).forEach(function (m) {
+      var t = String(m).split(' \u2014 ')[0].trim();
+      if ((j.order || []).indexOf(t) > -1) set[t] = 1;
+    });
+    return set;
+  }
+
   /* Kya hoga, wo pehle dikhao — commit se pehle */
   function buildRestorePlan(j) {
     var mode = $('rsMode').value;
+    var missed = rsMissed(j);
+    // Limited login se bani file: har table RLS se chhanti hui ho sakti hai
+    if (mode === 'replace' && j.access_ok === false) {
+      return Promise.reject(new Error('Yeh backup poori ijazat ke baghair bana tha (adhoora). ' +
+        'Is se "Poora replace" nahi ho sakta \u2014 sirf "ghaayab records" wala tareeqa chunein.'));
+    }
     return Promise.all(j.order.map(function (t) {
-      return sb.from(t).select('id').then(function (r) {
+      var rows = j.tables[t] || [];
+      if (RS_SKIP[t]) {
+        return { table:t, add:0, upd:0, del:0, total:rows.length, skip:'record' };
+      }
+      if (mode === 'replace' && missed[t]) {
+        return { table:t, add:0, upd:0, del:0, total:rows.length, skip:'missed' };
+      }
+      return selectAll(t, 'id').then(function (r) {
         var have = {};
         (r.error ? [] : (r.data || [])).forEach(function (x) { have[x.id] = true; });
-        var rows = j.tables[t] || [];
+        var inFile = {};
+        rows.forEach(function (x) { inFile[String(x.id)] = 1; });
         var add = 0, upd = 0;
         rows.forEach(function (x) { if (have[x.id]) upd++; else add++; });
         var del = mode === 'replace'
-          ? Object.keys(have).filter(function (id) {
-              return !rows.some(function (x) { return String(x.id) === String(id); });
-            }).length
+          ? Object.keys(have).filter(function (id) { return !inFile[String(id)]; }).length
           : 0;
         return { table:t, add:add, upd:mode === 'replace' ? upd : 0, del:del,
-                 total:rows.length, err:!!r.error };
+                 total:rows.length, err:!!r.error, missed:!!missed[t],
+                 // file mein ek bhi row nahi magar database mein hain — shayad padhi hi na gayi
+                 emptyWipe:mode === 'replace' && !rows.length && del > 0 };
       });
     }));
   }
 
   function drawRestorePlan(plan) {
     var any = plan.filter(function (p) { return p.add || p.upd || p.del; });
-    $('rsPlan').innerHTML = '<div class="grp">Kya hoga</div>' +
+    var missedT = plan.filter(function (p) { return p.skip === 'missed' || p.missed; });
+    var emptyT  = plan.filter(function (p) { return p.emptyWipe; });
+    var recT    = plan.filter(function (p) { return p.skip === 'record' && p.total; });
+    var warn = '';
+    if (missedT.length) {
+      warn += '<div class="f bad"><div class="hint"><b>\u26a0 Backup file adhoori hai.</b> Yeh tables ' +
+        'backup ke waqt poori nahi aayi thin: <b>' + missedT.map(function (p) { return esc(p.table); }).join(', ') +
+        '</b>. Restore inhein na urhata hai, na badalta hai' +
+        ($('rsMode').value === 'replace' ? '' : ' (sirf jo record database mein nahi, wo daala jayega)') + '.</div></div>';
+    }
+    if (emptyT.length) {
+      warn += '<div class="f bad"><div class="hint"><b>\u26a0 File mein in tables ki ek bhi row nahi, magar ' +
+        'database mein hain:</b> ' + emptyT.map(function (p) { return esc(p.table) + ' (' + p.del + ')'; }).join(', ') +
+        '. Ho sakta hai backup ke waqt yeh padhi hi na gayi hon. Neeche tick kiye baghair inhein haath nahi lagega.</div>' +
+        '<label style="display:flex;gap:8px;align-items:center;font-size:12.5px;margin-top:6px">' +
+        '<input type="checkbox" id="rsWipeOk" style="flex:none"> Haan, yeh tables bhi poori khaali kar do</label></div>';
+    }
+    if (recT.length) {
+      warn += '<div class="f"><div class="hint">Sirf record ke liye, restore nahi hongi: ' +
+        recT.map(function (p) { return esc(p.table); }).join(', ') +
+        '. (Users dobara Users screen se banein; balances aur cost khud dobara calculate hote hain.)</div></div>';
+    }
+    $('rsPlan').innerHTML = warn + '<div class="grp">Kya hoga</div>' +
       (any.length
         ? '<table class="ltab"><thead><tr><th>Table</th>' +
           '<th style="text-align:right">Nayi</th><th style="text-align:right">Badlengi</th>' +
@@ -4461,7 +4532,8 @@
             return '<tr><td>' + esc(p.table) + '</td>' +
               '<td class="r">' + (p.add || '\u2014') + '</td>' +
               '<td class="r">' + (p.upd || '\u2014') + '</td>' +
-              '<td class="r' + (p.del ? ' neg' : '') + '">' + (p.del || '\u2014') + '</td></tr>';
+              '<td class="r' + (p.del ? ' neg' : '') + '">' + (p.del || '\u2014') +
+              (p.emptyWipe ? ' <small>(tick ke baghair nahi)</small>' : '') + '</td></tr>';
           }).join('') + '</tbody></table>'
         : '<div class="hint">Koi tabdeeli nahi \u2014 database pehle se file jaisa hai.</div>') +
       '<div class="f"><div class="hint">Restore se pehle system khud ek taaza backup file ' +
@@ -4489,12 +4561,15 @@
       btn.disabled = false; btn.textContent = 'Check karein';
     }).catch(function (e) {
       btn.disabled = false; btn.textContent = 'Check karein';
+      // pichli file/tareeqe ka plan aur Restore button na reh jaye
+      rsPlan = null; $('rsPlan').innerHTML = '';
+      $('rsConfirmBox').style.display = 'none'; $('rsGo').style.display = 'none';
       toast(e.message, true);
     });
   });
 
   $('rsGo').addEventListener('click', function () {
-    if (!rsData) { toast('Pehle file check karein', true); return; }
+    if (!rsData || !rsPlan) { toast('Pehle file check karein', true); return; }
     if ($('rsConfirm').value.trim().toUpperCase() !== 'RESTORE') {
       toast('Confirm karne ke liye RESTORE likhein', true); return;
     }
@@ -4508,7 +4583,7 @@
     var btn = this; btn.disabled = true; btn.textContent = 'Restore ho raha hai…';
     // Pehle abhi ka data utaar lo — wapas laut'ne ka raasta khula rahe
     downloadSafetyBackup().then(function () {
-      return runRestore(rsData, $('rsMode').value);
+      return runRestore(rsData, $('rsMode').value, rsPlan, !!($('rsWipeOk') && $('rsWipeOk').checked));
     }).then(function (res) {
       toast(res.done + ' rows daali gayin. Costing dobara chal rahi hai…');
       return sb.rpc('recompute_all_item_costs', { lock_date:null }).then(function (r) {
@@ -4599,7 +4674,7 @@
       if (order.indexOf(t) === -1) order.push(t);
     });
     return Promise.all(order.map(function (t) {
-      return sb.from(t).select('*').then(function (r) {
+      return selectAll(t, '*').then(function (r) {
         return { t:t, rows:r.error ? [] : (r.data || []) };
       });
     })).then(function (all) {
@@ -4629,7 +4704,7 @@
   function deleteNotIn(t, keep) {
     var keepSet = {};
     keep.forEach(function (id) { keepSet[String(id)] = 1; });
-    return sb.from(t).select('id').then(function (r) {
+    return selectAll(t, 'id').then(function (r) {
       if (r.error) throw new Error(r.error.message);
       var kill = (r.data || []).map(function (x) { return x.id; })
                    .filter(function (id) { return !keepSet[String(id)]; });
@@ -4730,8 +4805,19 @@
        2. Koi table fail ho to poora restore ruk nahi jata. Pehle pehli
           hi ghalti par sab kuch khara reh jata tha — data aadha andar,
           aadha bahar, aur upar se "mukammal" ka message. */
-  function runRestore(j, mode) {
-    var order = j.order || [];
+  function runRestore(j, mode, plan, wipeOk) {
+    if (mode === 'replace' && j.access_ok === false) {
+      return Promise.reject(new Error('Adhoori (limited login) file se Poora replace nahi hota'));
+    }
+    // Check (plan) ke baghair kabhi nahi — wahi batata hai kis table ko chhorna hai
+    var hold = {};
+    (plan || []).forEach(function (p) {
+      if (p.skip || (mode === 'replace' && p.emptyWipe && !wipeOk)) hold[p.table] = p.skip || 'empty';
+    });
+    var missed = rsMissed(j);
+    var order = (j.order || []).filter(function (t) {
+      return !RS_SKIP[t] && !(mode === 'replace' && missed[t]);
+    });
     var res = { done:0, failed:[], lockNote:'', seqSql:'' };
     var chain = Promise.resolve();
     var savedLock = null, hadLock = false;
@@ -4755,6 +4841,7 @@
       order.slice().reverse().forEach(function (t) {
         // settings ki single-row tables kabhi delete nahi hotin
         if (t === 'period_lock' || SETTINGS_TABLES.indexOf(t) > -1) return;
+        if (hold[t]) return;                          // adhoori / khaali-file table — urhana nahi
         chain = chain.then(function () {
           var rows = j.tables[t] || [];
           var keep = rows.map(function (x) { return x.id; }).filter(Boolean);
@@ -4796,6 +4883,15 @@
       });
     });
 
+    /* ---- 5. Party opening snapshot purane data ka hai — mita do, agli dafa
+            ledger khulte hi restore hue data se khud ban jata hai ---- */
+    chain = chain.then(function () {
+      if (!res.done) return;
+      return sb.from('party_opening_balances').delete().gte('as_of_date', '1900-01-01').then(function (r) {
+        if (r.error) res.failed.push({ table:'party_opening_balances (purana snapshot)', msg:r.error.message });
+      });
+    });
+
     return chain.then(function () {
       res.seqSql = buildSeqSql(j);
       return res;
@@ -4822,9 +4918,11 @@
       fy_start_month:Number($('stFy').value) || 7,
       sale_prefix:sp, purchase_prefix:bp,
       print_terms:$('stTerms').value
-    }).eq('id', 1).then(function (r) {
+    }).eq('id', 1).select('id').then(function (r) {
       btn.disabled = false; btn.textContent = 'Save';
       if (r.error) { sayErr(r.error, 'save'); return; }
+      // RLS mana kare to error nahi aata — 0 rows wapas aati hain. Chup-chaap "save ho gayin" na kahein.
+      if (!r.data || !r.data.length) { toast('Setup sirf admin badal sakta hai \u2014 kuch save nahi hua', true); return; }
       toast('Settings save ho gayin');
       $('setupModal').classList.remove('on');
       loadAppSettings();
@@ -5062,7 +5160,9 @@
     showErr('cErr', '');
     if (!/^https:\/\/.+/.test(url)) { showErr('cErr', 'The URL should start with https://'); return; }
     if (!key) { showErr('cErr', 'Paste the publishable (anon) key.'); return; }
-    if (/service_role|^sb_secret/i.test(key)) {
+    // Purani service key JWT hoti hai — "service_role" us ke andar base64 mein chhupa hai.
+    // Is liye regex nahi, app-config ka isSecretKey (payload khol kar role dekhta hai).
+    if (window.APP_CONFIG.isSecretKey(key)) {
       showErr('cErr', 'That is the secret key. Use the publishable (anon) key instead.'); return;
     }
     $('cGo').disabled = true; $('cGo').textContent = 'Connecting…';
@@ -5721,7 +5821,8 @@
     $('activityBtn').style.display = (me && me.isAdmin) ? '' : 'none';
     $('wipeBtn').style.display = (me && me.isAdmin) ? '' : 'none';
     $('warehousesBtn').style.display = can('masters_edit') ? '' : 'none';
-    $('setupBtn').style.display      = can('masters_edit') ? '' : 'none';
+    // Setup (currency, prefix, financial year) ab sirf admin — app_settings likhna admin-only hai (M16)
+    $('setupBtn').style.display      = (me && me.isAdmin) ? '' : 'none';
     $('agingBtn').style.display      = can('reports_view') ? '' : 'none';
     // Restore poore system ko badal deta hai — sirf admin
     $('restoreBtn').style.display    = !!(me && me.isAdmin) ? '' : 'none';
@@ -5761,6 +5862,11 @@
     var cfg;
     try { cfg = JSON.parse(raw); } catch (e) { cfg = null; }
     if (!cfg || !cfg.url || !cfg.key) { $('gateConnect').classList.add('on'); return; }
+    // Pehle se save hui secret key (purane guard se nikal gayi thi) — us se RLS band chalti. Dobara Connect.
+    if (window.APP_CONFIG.isSecretKey(cfg.key)) {
+      $('gateConnect').classList.add('on');
+      showErr('cErr', 'Saved key is the secret key. Paste the publishable (anon) key instead.'); return;
+    }
     try { sb = makeClient(cfg.url, cfg.key); } catch (e) {
       $('gateConnect').classList.add('on'); return;
     }

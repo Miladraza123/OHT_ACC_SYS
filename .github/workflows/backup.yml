@@ -6,6 +6,10 @@ on:
     - cron: '0 1 * * *'
   workflow_dispatch:        # haath se bhi chala sakein
 
+# Backup ko repo mein kuch likhna nahi — sirf parhna (least privilege)
+permissions:
+  contents: read
+
 jobs:
   backup:
     runs-on: ubuntu-latest
@@ -23,13 +27,16 @@ jobs:
           node-version: '22'
 
       - name: Install
-        run: npm install
+        # Repo mein package-lock.json nahi, is liye "npm ci" nahi chal sakta
+        run: npm install --no-audit --no-fund
 
       - name: Backup banao aur email karo
         run: node backup.js
         env:
           SUPABASE_URL:       ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY:  ${{ secrets.SUPABASE_ANON_KEY }}
+          # ikhtiyari — ho to RLS ke baghair poora data (login ki zaroorat nahi)
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           BACKUP_EMAIL:       ${{ secrets.BACKUP_EMAIL }}
           BACKUP_PASSWORD:    ${{ secrets.BACKUP_PASSWORD }}
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}

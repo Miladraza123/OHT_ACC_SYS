@@ -89,7 +89,10 @@
   .scrim.on { display:block; }
 
   .canvas { flex:1; overflow:auto; padding:18px 14px 84px; display:flex; justify-content:center; min-height:0; }
-  .scaler { transform:scale(var(--z)); transform-origin:top center; }
+  /* zoom: sheet ko upar-baayen kone se chhota karo — scaler ka apna dabba (width × zoom) flex ke beech
+     me hota hai. Pehle "top center" tha: scaler pehle hi chhota tha, phir bhi beech se scale hota tha,
+     to phone (390px) par sheet daayen se bahar nikal jaati thi aur Debit taraf kat jaati thi. */
+  .scaler { transform:scale(var(--z)); transform-origin:top left; flex:none; margin:0 auto; }
 
   /* ═══════ A4 SHEET — sized in mm and pt so print matches exactly ═══════ */
   .sheet { width:210mm; min-height:297mm; background:var(--paper); padding:11mm 9mm 9mm;
@@ -453,7 +456,7 @@
 
         <div class="opening">
           <label for="openAmt">Opening Balance (₨)</label>
-          <input class="mono" id="openAmt" type="text" inputmode="numeric" maxlength="15">
+          <input class="mono" id="openAmt" type="text" inputmode="decimal" maxlength="20">
           <select id="openSide" aria-label="Opening balance side">
             <option value="cr">Cr</option><option value="dr">Dr</option>
           </select>
@@ -759,7 +762,7 @@
 
   var rowsEl = $('rows');
 
-  var data = { firm:'', sheets:{}, sheetBase:{} };
+  var data = { firm:'', sheets:{}, sheetBase:{}, sheetMeta:{}, sheetVer:{}, dels:{}, touched:{}, touchedMeta:{} };
   var active = null, ready = false, saveTimer = null;
   var zoom = 1, fitMode = true, mode = 'exact', selectedRow = null;
 
@@ -807,6 +810,81 @@
     } catch (e) {}
   }
   var sb = null, pendingSync = {}, syncTimer = null, online = navigator.onLine;
+
+  /* na-bheji sheets ki list (date → 1 = save, 'del' = delete) — pehle sirf memory me thi,
+     app band hote hi offline kaam gum ho jata tha. Ab localStorage me rehti hai. */
+  var PKEY = window.APP_CONFIG.key('ledger-pending');
+  function loadPending() {
+    try { pendingSync = JSON.parse(window.localStorage.getItem(PKEY) || '{}') || {}; } catch (e) { pendingSync = {}; }
+  }
+  function savePending() {
+    try { window.localStorage.setItem(PKEY, JSON.stringify(pendingSync)); } catch (e) {}
+  }
+  loadPending();
+
+  /* har line ki pakki pehchan: row[8]. 0..7 wahi purani jagah (trial_balance, backup, masters inhi par chalte hain).
+     Purani lines (bina id) ko position se id milti hai ('x'+i) — har device ek hi id deta hai,
+     aur agli save par id cloud par chali jaati hai. */
+  var RID = 8;
+  function newRid() { return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); }
+  function withIds(rows) {
+    return (Array.isArray(rows) ? rows : []).map(function (r, i) {
+      r = Array.isArray(r) ? r.slice() : [];
+      for (var k = r.length; k < 8; k++) r[k] = (k === 4 || k === 5) ? 0 : '';
+      if (!r[RID]) r[RID] = 'x' + i;
+      return r;
+    });
+  }
+  function clone(x) { return JSON.parse(JSON.stringify(x)); }
+  /* purana local data (pichle version ka) naye dhaanche me */
+  function normalizeData() {
+    if (!data.sheets) data.sheets = {};
+    if (!data.sheetBase) data.sheetBase = {};
+    if (!data.sheetMeta) data.sheetMeta = {};
+    if (!data.sheetVer) data.sheetVer = {};
+    if (!data.dels) data.dels = {};
+    if (!data.touched) data.touched = {};
+    if (!data.touchedMeta) data.touchedMeta = {};
+    Object.keys(data.sheets).forEach(function (iso) { data.sheets[iso].rows = withIds(data.sheets[iso].rows); });
+    Object.keys(data.sheetBase).forEach(function (iso) { data.sheetBase[iso] = withIds(data.sheetBase[iso]); });
+    // pichle version ka na-bheja kaam: us me "chhui lines" ka hisaab nahi tha — baseline se jo alag hai wahi apna maano
+    Object.keys(pendingSync).forEach(function (iso) {
+      var sh = data.sheets[iso], base = data.sheetBase[iso];
+      if (!sh || data.touched[iso] || data.sheetVer[iso]) return;
+      var B = byId(base || []), t = {};
+      sh.rows.forEach(function (r) { if (!B[r[RID]] || !rowsEqual(r, B[r[RID]])) t[r[RID]] = 1; });
+      data.touched[iso] = t;
+      var bm = data.sheetMeta[iso] || {}, tm = {};
+      ['opening', 'side', 'page'].forEach(function (k) { if (cv(sh[k]) !== cv(bm[k])) tm[k] = 1; });
+      data.touchedMeta[iso] = tm;
+    });
+  }
+  /* Session khatam (JWT expired) — pehle ek dafa chupke se refresh, na bane to login par bhejo.
+     Na-bheja kaam pendingSync + local copy me mehfooz rehta hai, login ke baad khud chala jata hai. */
+  function isAuthErr(e) {
+    if (!e || isClockErr(e)) return false;
+    var c = String(e.code || e.status || '');
+    if (c === 'PGRST301' || c === 'PGRST302' || c === '401') return true;
+    return /jwt expired|invalid jwt|jwt.*(expired|invalid)|not authenticated|refresh token/i.test((e.message || '') + ' ' + (e.error_description || ''));
+  }
+  var authFixing = false, lastRefreshAt = 0;
+  function handleAuthExpired() {
+    if (authFixing) return;
+    authFixing = true;
+    flushSave();
+    function goLogin() {
+      authFixing = false;
+      ready = false;
+      syncNote('Signed out \u2014 entries kept on this device', '#B08A3E');
+      showLogin('Session khatam ho gaya \u2014 dobara sign in karein. Bina bheji entries is device par mehfooz hain.');
+    }
+    if (Date.now() - lastRefreshAt < 15000) { goLogin(); return; }   // abhi refresh kiya tha, phir bhi rad — login hi karna hoga
+    lastRefreshAt = Date.now();
+    sb.auth.refreshSession().then(function (res) {
+      if (res && res.data && res.data.session && !res.error) { authFixing = false; pushPending(1); return; }
+      goLogin();
+    }).catch(goLogin);
+  }
 
   function syncNote(text, colour) {
     var n = $('syncNote');
@@ -861,23 +939,47 @@
           setTimeout(pullAll, 4000);
           return false;
         }
+        if (isAuthErr(res.error)) { handleAuthExpired(); return false; }
         syncNote('Cloud error', '#E89A9A');
         console.error('Supabase select failed:', res.error);
         return false;
       }
+      normalizeData();
+      var live = {};
       (res.data || []).forEach(function (row) {
+        var iso = row.sheet_date;
+        live[iso] = 1;
+        // is din ka na-bheja kaam is device par pada hai — cloud ki copy us ke upar mat likho,
+        // pehle push hoga (wo khud cloud se milaan karta hai)
+        if (pendingSync[iso]) return;
         // is din ko abhi (pichle 3 second me) edit kiya ja raha hai to is ka model mat badlo —
         // warna abhi-abhi ki gayi tabdeeli (jaise opening balance clear karna) cloud ki purani
         // (abhi tak na-bheji hui) value se dab jayegi, khaas kar Realtime ki tezi ki wajah se
-        if (row.sheet_date === active && Date.now() - lastEditTime < 3000) return;
-        data.sheets[row.sheet_date] = {
+        if (iso === active && Date.now() - lastEditTime < 3000) return;
+        // purana jawab (hamari apni taaza save se pehle ka) — naye ko purane se mat dabao
+        if (data.sheetVer[iso] && Number(row.version) < data.sheetVer[iso]) return;
+        var rows = withIds(row.rows);
+        data.sheets[iso] = {
           opening: row.opening || '', side: row.side || 'cr',
-          page: row.page || '', rows: row.rows || []
+          page: row.page || '', rows: rows
         };
-        if (!data.sheetBase) data.sheetBase = {};
-        data.sheetBase[row.sheet_date] = JSON.parse(JSON.stringify(row.rows || []));
-        if (row.firm && !data.firm) data.firm = row.firm;
+        data.sheetBase[iso] = clone(rows);
+        data.sheetMeta[iso] = { opening: row.opening || '', side: row.side || 'cr', page: row.page || '' };
+        data.sheetVer[iso] = Number(row.version) || 1;
+        delete data.touched[iso]; delete data.touchedMeta[iso]; delete data.dels[iso];
+        if (row.firm && !data.firm && !data.firmEdited) data.firm = row.firm;
       });
+      // jo din kabhi cloud par the (version yaad hai) magar ab nahi — kisi aur device ne mita diye
+      Object.keys(data.sheets).forEach(function (iso) {
+        if (live[iso] || !data.sheetVer[iso] || pendingSync[iso]) return;
+        delete data.sheets[iso]; delete data.sheetBase[iso]; delete data.sheetMeta[iso];
+        delete data.sheetVer[iso]; delete data.dels[iso]; delete data.touched[iso]; delete data.touchedMeta[iso];
+      });
+      // firm ka naam: naye device par cloud wala naam khaane me dikhao (warna khaali khaana save hokar naam mita deta tha)
+      if (document.activeElement !== $('firmName')) {
+        $('firmName').value = data.firm || '';
+        $('shFirm').textContent = (data.firm || '').trim() || 'Daily Register';
+      }
       store.set(KEY, JSON.stringify(data));
       syncNote('Synced', '#7DC9A9');
       setTimeout(function () { syncNote(''); }, 2000);
@@ -885,86 +987,203 @@
     }).catch(function () { syncNote('Offline', '#B08A3E'); return false; });
   }
 
-  /* teen-tarfa milaan: baseline (pichli baar cloud se mila tha), yeh device (abhi), doosra device (abhi cloud par).
-     jo khaana hum ne khud nahi chheda (baseline jaisa hi hai), wahan doosre ka kaam le lo.
-     jo khaana hum ne chheda hai, wahan apna hi rakho. isi tarah koi bhi kisi ka kaam nahi mitata.
-     agar dono ne isi jagah par ALAG ALAG nayi line daali ho (jo pehle kisi ke paas nahi thi),
-     to unhe ek hi line na samjho — dono ko alag alag rakho. */
-  function rowsEqual(a, b) { return JSON.stringify(a || null) === JSON.stringify(b || null); }
-  function mergeRows(baseRows, localRows, remoteRows) {
-    baseRows = baseRows || []; localRows = localRows || []; remoteRows = remoteRows || [];
-    var maxLen = Math.max(baseRows.length, localRows.length, remoteRows.length);
-    var merged = [], extras = [];
-    for (var i = 0; i < maxLen; i++) {
-      var b = baseRows[i], l = localRows[i], r = remoteRows[i];
-      var bExists = i < baseRows.length;
-      if (l === undefined) { if (r !== undefined) merged[i] = r; continue; }
-      if (r === undefined) { merged[i] = l; continue; }
-      if (!bExists && !rowsEqual(l, r)) {
-        // dono ne isi jagah bilkul nayi, alag line daali — dono ko rakho, mitao mat
-        merged[i] = l; extras.push(r); continue;
-      }
-      var cellLen = Math.max((b || []).length, l.length, r.length);
-      var row = [];
-      for (var c = 0; c < cellLen; c++) {
-        var bc = b ? b[c] : undefined, lc = l[c], rc = r[c];
-        var localChanged = JSON.stringify(lc) !== JSON.stringify(bc);
-        row[c] = localChanged ? lc : (rc !== undefined ? rc : lc);
-      }
-      merged[i] = row;
-    }
-    return merged.concat(extras);
+  /* teen-tarfa milaan, LINE KI ID se (row[8]) — position se nahi:
+     baseline (pichli baar cloud se mila tha), yeh device (abhi), doosra device (abhi cloud par).
+     Is device ki tabdeeliyan andaze se nahi, SAAF LIKHI hui hain:
+       touched — jin lines ko is device par chheda gaya (type, ✓, party)
+       mine    — jo lines is device par nayi bani (abhi cloud par nahi gayin)
+       dels    — jo lines is device ne mitayin
+     Qaida:
+       * line dono taraf: chhui hai to jo khaana hum ne badla wahan apna, baqi cloud ka; na chhui to poori cloud wali
+       * sirf cloud par: is device ne mitayi ho to hatao, warna rakho — "is screen par nahi" kabhi delete nahi
+       * sirf is device par: nayi (mine) ya chhui hui ho to rakho; warna doosre ne mitayi — hatao
+     Do device ek jaisi nayi line daalein to dono ki id alag hai — dono bachti hain.
+     Dono ne yeh din alag alag naya banaya ho (baseline khaali) to doosre ki khaali padding dobara nahi jorte. */
+  var GROUPS = [[0], [1, 7], [2], [3, 6], [4], [5]];   // naam aur us ki party id saath chalte hain
+  function cv(x) { return x == null ? '' : String(x); }
+  function rowsEqual(a, b) {
+    for (var k = 0; k < 8; k++) if (cv(a && a[k]) !== cv(b && b[k])) return false;
+    return true;
+  }
+  function rowBlank(r) {
+    return !r || ![0, 1, 2, 3].some(function (k) { return cv(r[k]).trim() !== ''; });
+  }
+  function byId(rows) { var m = {}; rows.forEach(function (r) { m[r[RID]] = r; }); return m; }
+  function idSet(list) { var m = {}; (list || []).forEach(function (id) { m[id] = 1; }); return m; }
+  function mergeCells(b, l, r, touched) {
+    if (!touched) return r.slice();
+    if (!b) return l.slice();
+    var row = r.slice();
+    GROUPS.forEach(function (g) {
+      var mine = g.some(function (k) { return cv(l[k]) !== cv(b[k]); });
+      if (mine) g.forEach(function (k) { row[k] = l[k]; });
+    });
+    return row;
+  }
+  function mergeRows(baseRows, localRows, remoteRows, opt) {
+    opt = opt || {};
+    baseRows = withIds(baseRows); localRows = withIds(localRows); remoteRows = withIds(remoteRows);
+    var B = byId(baseRows), L = byId(localRows);
+    var gone = idSet(opt.dels), touched = opt.touched || {}, mine = idSet(opt.mine);
+    var fresh = !baseRows.length, out = [];
+    remoteRows.forEach(function (r) {
+      var id = r[RID];
+      if (gone[id]) return;                                   // is device ne mitayi
+      if (L[id]) { out.push(mergeCells(B[id], L[id], r, touched[id] || (fresh && !B[id]))); return; }
+      if (fresh && !B[id] && rowBlank(r)) return;             // doosre device ki khaali padding
+      out.push(r);
+    });
+    var prev = null;
+    localRows.forEach(function (l) {
+      var id = l[RID];
+      var at = -1;
+      for (var i = 0; i < out.length; i++) if (out[i][RID] === id) { at = i; break; }
+      if (at !== -1) { prev = id; return; }
+      if (gone[id]) return;
+      var keep = B[id] ? !!touched[id]                        // doosre ne mitayi — sirf tab rakho jab hum ne bhi chhui
+                       : (fresh || mine[id] || touched[id]);  // nayi line — rakho; purani baasi line — nahi
+      if (!keep) return;
+      var after = -1;
+      if (prev !== null) for (var j = 0; j < out.length; j++) if (out[j][RID] === prev) { after = j; break; }
+      out.splice(after + 1, 0, l.slice());
+      prev = id;
+    });
+    return out;
+  }
+  /* is device par chheri gayi line ka nishaan (merge isi ko "apni tabdeeli" maanta hai) */
+  function touchRow(el) {
+    var tr = el && el.closest ? el.closest('tr') : null;
+    if (!tr || tr.parentNode !== rowsEl || !active) return;
+    var id = tr.getAttribute('data-rid'); if (!id) return;
+    if (!data.touched) data.touched = {};
+    (data.touched[active] = data.touched[active] || {})[id] = 1;
+  }
+  function touchMeta(k) {
+    if (!active) return;
+    if (!data.touchedMeta) data.touchedMeta = {};
+    (data.touchedMeta[active] = data.touchedMeta[active] || {})[k] = 1;
   }
   /* jo sheet abhi khuli hai usay dobara dikhana — bina dobara harvest kiye, warna milaan ka natija dab jayega */
   function paintRows(iso) {
     if (iso !== active || !ready) return;
     var s = data.sheets[iso]; if (!s) return;
     rowsEl.innerHTML = '';
-    (s.rows || []).forEach(function (r) {
-      var tr = makeRow();
-      tr.querySelectorAll('input, textarea').forEach(function (el) {
-        el.value = r[+el.getAttribute('data-k')] || '';
-        if (el.tagName === 'TEXTAREA') {
-          var pid = r[el.getAttribute('data-k') === '3' ? 6 : 7] || '';
-          if (pid) el.setAttribute('data-pid', pid); else el.removeAttribute('data-pid');
-        }
-      });
-      tr.querySelectorAll('td.cash').forEach(function (td) {
-        if (r[+td.getAttribute('data-c')]) td.classList.add('on');
-      });
-    });
+    var mine = idSet(s.mine);
+    (s.rows || []).forEach(function (r) { fillRow(r, mine); });
+    // opening / page bhi taaza karo (jis khaane me abhi likh rahe hon use chhor kar)
+    if (document.activeElement !== $('openAmt')) $('openAmt').value = s.opening || '';
+    if (document.activeElement !== $('openSide')) $('openSide').value = s.side || 'cr';
+    if (document.activeElement !== $('pageNo')) $('pageNo').value = s.page || '';
     ensureBlank(); selectRow(null); recalc(); fitAllParas(); paintAll();
+  }
+  function fillRow(r, mine) {
+    var tr = makeRow();
+    if (r[RID]) tr.setAttribute('data-rid', r[RID]);
+    if (!(mine && mine[r[RID]])) tr.removeAttribute('data-new');
+    tr.querySelectorAll('input, textarea').forEach(function (el) {
+      el.value = r[+el.getAttribute('data-k')] || '';
+      if (el.tagName === 'TEXTAREA') {
+        var pid = r[el.getAttribute('data-k') === '3' ? 6 : 7] || '';
+        if (pid) el.setAttribute('data-pid', pid); else el.removeAttribute('data-pid');
+      }
+    });
+    tr.querySelectorAll('td.cash').forEach(function (td) {
+      if (r[+td.getAttribute('data-c')]) td.classList.add('on');
+    });
+  }
+
+  /* opening / side / page ka bhi teen-tarfa milaan — jo hum ne nahi badla wahan cloud ka */
+  function mergeMeta(sh, base, remote, touched) {
+    var out = {};
+    touched = touched || {};
+    ['opening', 'side', 'page'].forEach(function (k) {
+      var l = cv(sh[k]), r = remote ? cv(remote[k]) : '';
+      if (!remote) out[k] = l;
+      else if (base) out[k] = touched[k] ? l : r;
+      else out[k] = (touched[k] || l !== '') ? l : r;          // pehli dafa: khaali ho to cloud wala
+    });
+    if (!out.side) out.side = 'cr';
+    // khud-ba-khud bhari opening (pichle din ka closing) cloud ki asli opening ko na dabaye
+    if (sh.autoOpen && remote && cv(remote.opening) !== '') { out.opening = remote.opening; out.side = remote.side || 'cr'; }
+    return out;
   }
 
   /* push the sheets that changed — "compare aur badlo" tareeqa:
      agar do phone theek usi lamhe likhein, to jo pehle jeete us ka kaam mehfooz rehta hai,
-     aur haarne wala khud khamoshi se taaza data ke sath dobara koshish karta hai — koi bhi kisi ka kaam nahi khota */
+     aur haarne wala khud khamoshi se taaza data ke sath dobara koshish karta hai (version number) —
+     koi bhi kisi ka kaam nahi khota */
+  var editSeq = {};
   function pushOnce(dates) {
     return sb.from('sheets').select('*').in('sheet_date', dates).then(function (res) {
       if (res.error) throw res.error;
+      normalizeData();
       var remoteByDate = {};
       (res.data || []).forEach(function (row) { remoteByDate[row.sheet_date] = row; });
 
       return Promise.all(dates.map(function (iso) {
+        var remote = remoteByDate[iso];
+        var seq0 = editSeq[iso] || 0;
+
+        // sheet delete karni hai (offline bhi ho sakti thi) — version barha kar, beech me koi likhe to dobara
+        if (pendingSync[iso] === 'del') {
+          // delete ke baad isi din par nayi sheet likhi gayi ho to wo agli baari (again) me jayegi
+          var reuse = sheetUsed(data.sheets[iso]);
+          if (!remote || remote.deleted_at) return Promise.resolve({ iso: iso, ok: true, again: reuse });
+          var v0 = Number(remote.version) || 1;
+          return sb.from('sheets').update({ deleted_at: new Date().toISOString(), version: v0 + 1 })
+            .eq('sheet_date', iso).eq('version', v0).select().then(function (r) {
+              if (r.error) return { iso: iso, error: r.error };
+              if (!r.data || !r.data.length) return { iso: iso, conflict: true };
+              return { iso: iso, ok: true, again: reuse };
+            });
+        }
+
         if (!data.sheets[iso]) data.sheets[iso] = { opening:'', side:'cr', page:'', rows:[] };
         var sh = data.sheets[iso];
-        var remote = remoteByDate[iso];
-        var baseRows = (data.sheetBase && data.sheetBase[iso]) || [];
-        var mergedRows = mergeRows(baseRows, sh.rows || [], remote ? (remote.rows || []) : []);
+        var revive = false;
+        if (remote && remote.deleted_at) {
+          // hum ne yeh din zinda dekha tha aur us ke baad kisi ne mita diya — mitana jeetta hai
+          if (data.sheetVer[iso] && (Number(remote.version) || 1) > data.sheetVer[iso]) {
+            return Promise.resolve({ iso: iso, goneElsewhere: true });
+          }
+          revive = true;     // mitaye hue din par nayi sheet — purani (Recycle Bin wali) lines me mat milao
+        }
+        var useRemote = remote && !revive && !sh.force;
+        var dels = (data.dels[iso] || []).slice();
+        var touched = clone(data.touched[iso] || {}), tMeta = clone(data.touchedMeta[iso] || {});
+        var mine = (sh.mine || []).slice();
+        var baseRows = useRemote ? (data.sheetBase[iso] || []) : [];
+        var mergedRows = useRemote
+          ? mergeRows(baseRows, sh.rows || [], remote.rows || [], { dels: dels, touched: touched, mine: mine })
+          : withIds(sh.rows).filter(function (r) { return dels.indexOf(r[RID]) === -1; });   // cloud par kuch nahi — jo yahan hai wahi
+        var meta = mergeMeta(sh, useRemote ? data.sheetMeta[iso] : null, useRemote ? remote : null, tMeta);
         var payloadRow = {
-          sheet_date: iso, firm: data.firm || '',
-          opening: (sh.opening != null && sh.opening !== undefined) ? sh.opening : ((remote && remote.opening) || ''),
-          side: sh.side || (remote && remote.side) || 'cr',
-          page: sh.page || (remote && remote.page) || '',
+          sheet_date: iso,
+          // firm: khaali naam cloud ke naam ko tab hi mitaye jab user ne khud khaana khaali kiya ho
+          firm: (data.firm || data.firmEdited) ? (data.firm || '') : ((remote && remote.firm) || ''),
+          opening: meta.opening, side: meta.side, page: meta.page,
           rows: mergedRows,
           version: remote ? (Number(remote.version) || 1) + 1 : 1,
           updated_at: new Date().toISOString()
         };
+        if (revive) payloadRow.deleted_at = null;
 
         function settled() {
-          sh.rows = mergedRows;
-          if (!data.sheetBase) data.sheetBase = {};
-          data.sheetBase[iso] = JSON.parse(JSON.stringify(mergedRows));
+          data.sheetBase[iso] = clone(mergedRows);
+          data.sheetMeta[iso] = { opening: meta.opening, side: meta.side, page: meta.page };
+          data.sheetVer[iso] = payloadRow.version;
+          var left = (data.dels[iso] || []).filter(function (id) { return dels.indexOf(id) === -1; });
+          if (left.length) data.dels[iso] = left; else delete data.dels[iso];
+          // nayi lines ab cloud par hain — "nayi" ka nishaan hatao (screen par bhi)
+          if (sh.mine) { sh.mine = sh.mine.filter(function (id) { return mine.indexOf(id) === -1; }); if (!sh.mine.length) delete sh.mine; }
+          if (iso === active) mine.forEach(function (id) {
+            var tr = rowsEl.querySelector('tr[data-rid="' + id + '"]'); if (tr) tr.removeAttribute('data-new');
+          });
+          // push ke dauran user ne aur likha ho to us ki local copy rehne do — pending aur nishaan bhi
+          if ((editSeq[iso] || 0) !== seq0) return { iso: iso, ok: true, again: true };
+          delete data.touched[iso]; delete data.touchedMeta[iso];
+          sh.rows = mergedRows; sh.opening = meta.opening; sh.side = meta.side; sh.page = meta.page;
+          delete sh.autoOpen; delete sh.force;
           return { iso: iso, ok: true };
         }
 
@@ -989,58 +1208,94 @@
     });
   }
 
+  function forgetLocal(iso) {
+    delete data.sheets[iso]; delete data.sheetBase[iso]; delete data.sheetMeta[iso];
+    delete data.sheetVer[iso]; delete data.dels[iso]; delete data.touched[iso]; delete data.touchedMeta[iso];
+  }
+
   function pushPending(attempt) {
     attempt = attempt || 1;
-    if (!sb || !online) { syncNote('Offline \u2014 saved on this device', '#B08A3E'); return; }
+    if (!sb || !online) { syncNote('Offline — saved on this device', '#B08A3E'); return; }
+    if (authFixing) return;
     var dates = Object.keys(pendingSync);
     if (!dates.length) return;
 
-    syncNote('Saving\u2026');
+    syncNote('Saving…');
     pushOnce(dates).then(function (results) {
       var conflicts = results.filter(function (r) { return r.conflict; });
       var failed = results.filter(function (r) { return r.error; });
-      results.filter(function (r) { return r.ok; }).forEach(function (r) { delete pendingSync[r.iso]; });
+      var again = false, repaint = false;
+      results.filter(function (r) { return r.ok; }).forEach(function (r) {
+        if (!r.again) { delete pendingSync[r.iso]; return; }
+        again = true;
+        if (pendingSync[r.iso] === 'del') pendingSync[r.iso] = 1;
+      });
+      var gone = results.filter(function (r) { return r.goneElsewhere; });
+      gone.forEach(function (r) {
+        delete pendingSync[r.iso]; forgetLocal(r.iso);
+        if (r.iso === active) repaint = true;
+      });
+      savePending();
+      store.set(KEY, JSON.stringify(data));
+      if (gone.length) {
+        ask('Sheet deleted on another device',
+            gone.map(function (r) { return longDate(r.iso); }).join(', ') +
+            ' was deleted on another device. It is in the Recycle Bin (Masters) — restore it there if it is still needed.', 'OK', true);
+        if (repaint) { active = null; openSheet(todayISO()); }
+        renderList();
+      }
 
       if (failed.length) {
         var e = failed[0].error;
-        if (isNetErr(e)) { syncNote('Offline \u2014 saved on this device', '#B08A3E'); retrySoon(); return; }
+        if (isNetErr(e)) { syncNote('Offline — saved on this device', '#B08A3E'); retrySoon(); return; }
+        if (isAuthErr(e)) { handleAuthExpired(); return; }
         if (isClockErr(e)) {
-          syncNote('Retrying\u2026', '#B08A3E');
+          syncNote('Retrying…', '#B08A3E');
           setTimeout(function () { pushPending(1); }, 4000);
           return;
         }
         syncNote('Cloud error', '#E89A9A');
         console.error('Supabase save failed:', e);
         var isCustomMsg = String(e.code) === 'P0001';   // hamari apni "period locked" jaisi Roman Urdu wali error
+        // pakki ghalti (din band / ijazat nahi) — yeh tabdeeli kabhi save nahi ho sakti: bar bar koshish na karo,
+        // cloud wali copy wapas le aao
+        var hard = failed.filter(function (f) { var c = String(f.error.code); return c === 'P0001' || c === '42501'; });
+        hard.forEach(function (f) { delete pendingSync[f.iso]; });
+        if (hard.length) {
+          savePending();
+          pullAll().then(function (ok) { if (ok) { renderList(); openSheet(active || todayISO()); } });
+        }
         ask('Could not save to cloud',
-            (e.message || 'Unknown error') + (e.hint ? '  \u2014  ' + e.hint : '') +
+            (e.message || 'Unknown error') + (e.hint ? '  —  ' + e.hint : '') +
             (e.code && !isCustomMsg ? '  (code ' + e.code + ')' : ''), 'OK', true);
         return;
       }
 
       if (conflicts.length) {
         // doosra device isi lamhe likh raha tha — taaza data ke sath foran dobara koshish karo
-        if (attempt >= 5) { syncNote('Retrying\u2026', '#B08A3E'); setTimeout(function () { pushPending(1); }, 2500); return; }
+        if (attempt >= 5) { syncNote('Retrying…', '#B08A3E'); setTimeout(function () { pushPending(1); }, 2500); return; }
         setTimeout(function () { pushPending(attempt + 1); }, 150 * attempt);
         return;
       }
 
-      store.set(KEY, JSON.stringify(data));
-      if (dates.indexOf(active) !== -1) {
+      if (dates.indexOf(active) !== -1 && pendingSync[active] !== 'del') {
         if (Date.now() - lastEditTime > 3000) paintRows(active);   // milaan ke baad dobara dikhao — magar type karte waqt nahi
       }
       renderList();
+      if (again) { clearTimeout(syncTimer); syncTimer = setTimeout(pushPending, 1200); }
       syncNote('Saved to cloud', '#7DC9A9');
       setTimeout(function () { syncNote(''); }, 2000);
-    }).catch(function () {
-      syncNote('Offline \u2014 saved on this device', '#B08A3E');
+    }).catch(function (e) {
+      if (isAuthErr(e)) { handleAuthExpired(); return; }
+      syncNote('Offline — saved on this device', '#B08A3E');
       retrySoon();
     });
   }
 
   function queueSync(iso) {
     if (!iso) return;
-    pendingSync[iso] = 1;
+    if (pendingSync[iso] !== 'del') pendingSync[iso] = 1;
+    savePending();
     clearTimeout(syncTimer);
     syncTimer = setTimeout(pushPending, 1200);
   }
@@ -1103,7 +1358,37 @@
            '-' + String(pk.getDate()).padStart(2, '0');
   }
   function num(v) { var n = parseFloat(String(v).replace(/,/g, '').trim()); return isNaN(n) ? 0 : n; }
-  function fmt(n) { return Math.round(n).toLocaleString('en-PK', { maximumFractionDigits:0 }); }
+  // raqam paise samet (2 decimal tak) — pehle Math.round se poore rupay ban jate the (12.5 → 13)
+  function fmt(n) { return (Number(n) || 0).toLocaleString('en-PK', { minimumFractionDigits:0, maximumFractionDigits:2 }); }
+  /* likhte waqt raqam ka khaana saaf karo: sirf hindse, comma aur ek '.', 2 decimal tak,
+     13 hindse tak (12 se zyada bhi chalein). Minus (ulti raqam) mana — khaana khaali. */
+  var MAXINT = 13;
+  function cleanAmt(v) {
+    v = String(v == null ? '' : v);
+    if (v.indexOf('-') !== -1) return '';
+    v = v.replace(/[^0-9.,]/g, '');
+    var i = v.indexOf('.');
+    var ip = i < 0 ? v : v.slice(0, i);
+    var dp = i < 0 ? null : v.slice(i + 1).replace(/[.,]/g, '').slice(0, 2);
+    var digits = 0, cut = '';
+    for (var k = 0; k < ip.length; k++) {
+      if (ip[k] === ',') { cut += ','; continue; }
+      if (digits >= MAXINT) break;
+      digits++; cut += ip[k];
+    }
+    return cut + (dp !== null ? '.' + dp : '');
+  }
+  function amtInput(el) {
+    var c = cleanAmt(el.value);
+    if (c === el.value) return;
+    var at = el.selectionStart, diff = el.value.length - c.length;
+    el.value = c;
+    try { el.setSelectionRange(Math.max(0, at - diff), Math.max(0, at - diff)); } catch (e) {}
+  }
+  function amtBlur(el) {
+    var raw = cleanAmt(el.value).replace(/,/g, '');
+    el.value = (raw === '' || raw === '.') ? '' : fmt(parseFloat(raw) || 0);
+  }
   function rs(n) { return '\u20A8 ' + fmt(n); }
   function longDate(iso) {
     return new Date(iso + 'T00:00:00').toLocaleDateString('en-PK', { day:'2-digit', month:'long', year:'numeric' });
@@ -1244,6 +1529,7 @@
     var ta = pkTa;
     ta.value = p.name + ' ';
     ta.setAttribute('data-pid', p.id);
+    touchRow(ta);
     pkClose();
     fitPara(ta); paint(ta);
     ta.focus();
@@ -1254,6 +1540,7 @@
     var nm = linkedName(ta);
     if (nm) ta.value = ta.value.slice(nm.length).replace(/^\s+/, '');
     ta.removeAttribute('data-pid');
+    touchRow(ta);
     fitPara(ta); paint(ta); ta.focus();
     queueSave();
   }
@@ -1280,11 +1567,13 @@
     var tr = document.createElement('tr');
     tr.innerHTML =
       '<td class="cash" data-c="4"><span class="hit" tabindex="0"><span class="tick">\u2713</span></span></td>' +
-      '<td class="amt cr"><input type="text" inputmode="numeric" maxlength="15" data-k="2"></td>' +
+      '<td class="amt cr"><input type="text" inputmode="decimal" maxlength="20" data-k="2"></td>' +
       '<td class="pty">' + ptyCell(3) + '</td>' +
       '<td class="cash mid" data-c="5"><span class="hit" tabindex="0"><span class="tick">\u2713</span></span></td>' +
-      '<td class="amt dr"><input type="text" inputmode="numeric" maxlength="15" data-k="0"></td>' +
+      '<td class="amt dr"><input type="text" inputmode="decimal" maxlength="20" data-k="0"></td>' +
       '<td class="pty">' + ptyCell(1) + '</td>';
+    tr.setAttribute('data-rid', newRid());   // line ki pakki pehchan — milaan isi se hota hai
+    tr.setAttribute('data-new', '1');        // is device par bani, abhi cloud par nahi gayi
     rowsEl.appendChild(tr);
     tr.querySelectorAll('textarea').forEach(fitPara);
     return tr;
@@ -1333,21 +1622,22 @@
 
     var v = $('closeVal'), t = $('closeTag');
     v.textContent = rs(Math.abs(closing));
-    if (Math.abs(closing) < 0.5) { t.textContent = '—'; t.style.color = 'var(--mute)'; v.style.color = 'var(--ink)'; }
+    if (Math.abs(closing) < 0.005) { t.textContent = '—'; t.style.color = 'var(--mute)'; v.style.color = 'var(--ink)'; }
     else if (closing > 0) { t.textContent = 'Cr'; t.style.color = 'var(--credit)'; v.style.color = 'var(--credit)'; }
     else { t.textContent = 'Dr'; t.style.color = 'var(--debit)'; v.style.color = 'var(--debit)'; }
 
     $('stDr').textContent = rs(dr);
     $('stCr').textContent = rs(cr);
     $('stBal').textContent = rs(Math.abs(closing)) +
-      (Math.abs(closing) < 0.5 ? '' : (closing > 0 ? ' Cr' : ' Dr'));
+      (Math.abs(closing) < 0.005 ? '' : (closing > 0 ? ' Cr' : ' Dr'));
   }
 
   function harvest() {
     if (!active) return;
-    var rows = [];
+    var rows = [], mine = [];
     rowsEl.querySelectorAll('tr').forEach(function (tr) {
-      var r = ['', '', '', '', 0, 0, '', ''];
+      var r = ['', '', '', '', 0, 0, '', '', tr.getAttribute('data-rid') || newRid()];
+      if (tr.getAttribute('data-new')) mine.push(r[RID]);
       tr.querySelectorAll('input, textarea').forEach(function (el) {
         r[+el.getAttribute('data-k')] = el.value;
         if (el.tagName === 'TEXTAREA') {
@@ -1360,10 +1650,25 @@
       });
       rows.push(r);
     });
+    var old = data.sheets[active] || {};
     data.sheets[active] = { opening:$('openAmt').value, side:$('openSide').value,
                             page:$('pageNo').value, rows:rows };
+    if (mine.length) data.sheets[active].mine = mine;
+    if (old.autoOpen) data.sheets[active].autoOpen = true;   // opening abhi tak khud bhari hui hai
+    if (old.force) data.sheets[active].force = true;         // restore ki hui sheet — jaisi hai waisi cloud par
+    editSeq[active] = (editSeq[active] || 0) + 1;
     data.firm = $('firmName').value;
   }
+  /* app band / peeche jaate waqt jo 400ms wali save abhi ruki hui hai wo foran kar do */
+  function flushSave() {
+    if (!saveTimer || !ready) return;
+    clearTimeout(saveTimer); saveTimer = null;
+    harvest();
+    try { window.localStorage.setItem(KEY, JSON.stringify(data)); } catch (e) {}
+    if (active) { if (pendingSync[active] !== 'del') pendingSync[active] = 1; savePending(); }
+  }
+  window.addEventListener('pagehide', flushSave);
+  document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'hidden') flushSave(); });
   var lastEditTime = 0;
   function save() {
     if (!ready) return;
@@ -1371,6 +1676,7 @@
     harvest();
     clearTimeout(saveTimer);
     saveTimer = setTimeout(function () {
+      saveTimer = null;
       store.set(KEY, JSON.stringify(data)).then(function () {
         var n = $('savedNote'); n.textContent = 'Saved';
         clearTimeout(n._t); n._t = setTimeout(function () { n.textContent = ''; }, 1500);
@@ -1392,10 +1698,28 @@
       var btn = document.createElement('button');
       btn.className = 'item' + (iso === active ? ' on' : '');
       btn.innerHTML = '<span>' + shortDate(iso) + '</span><span class="bal">' + fmt(Math.abs(b)) +
-                      (Math.abs(b) < 0.5 ? '' : (b > 0 ? ' Cr' : ' Dr')) + '</span>';
+                      (Math.abs(b) < 0.005 ? '' : (b > 0 ? ' Cr' : ' Dr')) + '</span>';
       btn.addEventListener('click', function () { openSheet(iso); closeDrawer(); });
       list.appendChild(btn);
     });
+  }
+  /* TESTING 4.3: naye din ki opening = pichle (taareekh wale) din ka closing, Cr/Dr samet.
+     Sirf us sheet par jo abhi tak "achhooti" hai: cloud par nahi gayi, na-bheji nahi, koi line nahi,
+     aur opening user ne khud nahi likhi. User ki likhi opening kabhi nahi badalti. */
+  function sheetUsed(sh) {
+    return !!sh && (cv(sh.opening) !== '' || (sh.rows || []).some(function (r) { return !rowBlank(r); }));
+  }
+  function carryOpening(iso) {
+    var sh = data.sheets[iso];
+    if (!sh || data.sheetVer[iso] || pendingSync[iso]) return;
+    if ((sh.rows || []).some(function (r) { return !rowBlank(r); })) return;
+    if (cv(sh.opening) !== '' && !sh.autoOpen) return;
+    var prev = Object.keys(data.sheets).filter(function (d) { return d < iso && sheetUsed(data.sheets[d]); }).sort().pop();
+    if (!prev) return;
+    var b = sheetBalance(prev);
+    if (Math.abs(b) < 0.005) { sh.opening = ''; sh.side = 'cr'; }
+    else { sh.opening = fmt(Math.abs(b)); sh.side = b < 0 ? 'dr' : 'cr'; }
+    sh.autoOpen = true;
   }
   function openSheet(iso) {
     if (active && active !== iso && ready) harvest();   // sirf ALAG din par jaate waqt purani screen mehfooz karo —
@@ -1404,6 +1728,7 @@
     if (active !== iso && typeof hideUndoBar === 'function') hideUndoBar();  // doosre din ka "Undo" yahan maani nahi rakhta
     active = iso;
     if (!data.sheets[iso]) data.sheets[iso] = { opening:'', side:'cr', page:'', rows:[] };
+    carryOpening(iso);
     var s = data.sheets[iso];
     $('openAmt').value = s.opening || '';
     $('openSide').value = s.side || 'cr';
@@ -1411,19 +1736,8 @@
     $('curDate').textContent = shortDate(iso);
     $('shDate').textContent = longDate(iso);
     rowsEl.innerHTML = '';
-    (s.rows || []).forEach(function (r) {
-      var tr = makeRow();
-      tr.querySelectorAll('input, textarea').forEach(function (el) {
-        el.value = r[+el.getAttribute('data-k')] || '';
-        if (el.tagName === 'TEXTAREA') {
-          var pid = r[el.getAttribute('data-k') === '3' ? 6 : 7] || '';
-          if (pid) el.setAttribute('data-pid', pid); else el.removeAttribute('data-pid');
-        }
-      });
-      tr.querySelectorAll('td.cash').forEach(function (td) {
-        if (r[+td.getAttribute('data-c')]) td.classList.add('on');
-      });
-    });
+    var mine = idSet(s.mine);
+    (s.rows || []).forEach(function (r) { fillRow(r, mine); });
     // only fill a page of rows for a sheet that has never been used
     if (!(s.rows && s.rows.length)) addRows(MIN_ROWS);
     if (!rowsEl.querySelectorAll('tr').length) makeRow();
@@ -1480,6 +1794,7 @@
   function toggleTick(hit) {
     var td = hit.closest('td.cash');
     if (!td) return;
+    touchRow(td);
     td.classList.toggle('on');
     recalc(); save();
   }
@@ -1513,6 +1828,7 @@
   });
   rowsEl.addEventListener('input', function (e) {
     var el = e.target;
+    touchRow(el);
     if (el.tagName === 'TEXTAREA') {
       if (/[\r\n]/.test(el.value)) {          // paste me line-break aa jaye to hata do
         var at = el.selectionStart;
@@ -1524,10 +1840,7 @@
     }
     if (el.tagName !== 'INPUT') return;
     var k = el.getAttribute('data-k');
-    if (k === '0' || k === '2') {
-      var d = el.value.replace(/[^0-9]/g, '');
-      if (d.length > 11) { d = d.slice(0, 11); el.value = fmt(parseFloat(d)); }
-    }
+    if (k === '0' || k === '2') amtInput(el);
     ensureBlank(); recalc(); save();
   });
   // font der se load ho to napai badal jaati hai — dobara fit karo
@@ -1537,7 +1850,7 @@
 
   rowsEl.addEventListener('click', function (e) {
     var td = e.target.closest('td.cash');
-    if (td) { td.classList.toggle('on'); recalc(); save(); }
+    if (td) { touchRow(td); td.classList.toggle('on'); recalc(); save(); }
     var tr = e.target.closest('tr');
     if (tr) selectRow(tr);
   });
@@ -1588,12 +1901,23 @@
     } else {
       lastRemoved.parent.appendChild(lastRemoved.tr);
     }
+    var rid = lastRemoved.tr.getAttribute('data-rid');
+    touchRow(lastRemoved.tr);
+    if (rid && data.dels && data.dels[active]) {
+      data.dels[active] = data.dels[active].filter(function (x) { return x !== rid; });
+    }
     recalc(); save();
     hideUndoBar();
   });
 
   function removeRow(tr) {
     lastRemoved = { tr:tr, next:tr.nextSibling, parent:tr.parentNode, sheetIso:active };
+    // saaf saaf likh do ke yeh line IS device ne mitayi — milaan sirf isi list se delete maanta hai
+    var rid = tr.getAttribute('data-rid');
+    if (rid && active) {
+      if (!data.dels) data.dels = {};
+      (data.dels[active] = data.dels[active] || []).push(rid);
+    }
     tr.remove();
     selectRow(null);
     if (!rowsEl.querySelectorAll('tr').length) makeRow();   // never leave the sheet empty
@@ -1613,22 +1937,26 @@
     var el = e.target; if (el.tagName !== 'INPUT') return;
     var k = el.getAttribute('data-k');
     if (k !== '0' && k !== '2') return;
-    var raw = el.value.replace(/,/g, '').trim();
-    if (raw !== '') { var v = parseFloat(raw); el.value = isNaN(v) ? '' : fmt(v); }
+    var was = el.value;
+    amtBlur(el);
+    if (el.value !== was) touchRow(el);
     recalc(); save();
   }, true);
 
   $('firmName').addEventListener('input', function () {
+    data.firmEdited = true;            // user ne khud badla — ab khaali naam bhi jaan boojh kar hai
     $('shFirm').textContent = this.value.trim() || 'Daily Register'; save();
   });
+  function openTyped() { touchMeta('opening'); touchMeta('side'); if (active && data.sheets[active]) delete data.sheets[active].autoOpen; }
+  // opening: decimal point mat kaato (12.5 pehle 125 ban jata tha) — comma blur par lagta hai
   $('openAmt').addEventListener('input', function () {
-    var d = this.value.replace(/[^0-9]/g, '');
-    if (d.length > 11) d = d.slice(0, 11);
-    this.value = d === '' ? '' : fmt(parseFloat(d));
+    openTyped(); amtInput(this);
     recalc(); save();
   });
-  $('openSide').addEventListener('change', function () { recalc(); save(); renderList(); });
+  $('openAmt').addEventListener('blur', function () { var was = this.value; amtBlur(this); if (this.value !== was) touchMeta('opening'); recalc(); save(); });
+  $('openSide').addEventListener('change', function () { openTyped(); recalc(); save(); renderList(); });
   $('pageNo').addEventListener('input', function () {
+    touchMeta('page');
     this.value = this.value.replace(/[^0-9]/g, ''); save();
   });
 
@@ -1686,11 +2014,10 @@
 
   function doDeleteSheet() {
     var gone = active;
-    if (sb && online) {
-      sb.from('sheets').update({ deleted_at: new Date().toISOString() }).eq('sheet_date', gone).then(function () {}).catch(function () {});
-    }
-    delete pendingSync[gone];
-    delete data.sheets[gone];
+    clearTimeout(saveTimer); saveTimer = null;
+    // delete bhi queue se jata hai: version barhta hai, ghalti dikhai jaati hai, offline ho to baad me chala jata hai
+    pendingSync[gone] = 'del'; savePending();
+    forgetLocal(gone); delete editSeq[gone];
     selectedRow = null;
     active = null;                     // stop openSheet from saving the sheet back
     var left = Object.keys(data.sheets).sort().reverse();
@@ -1698,6 +2025,7 @@
     if (next === gone) delete data.sheets[gone];
     openSheet(next);
     store.set(KEY, JSON.stringify(data));
+    pushPending();
   }
 
   function applyZoom() {
@@ -1853,7 +2181,7 @@
       var tag = (r[1] || '').trim().toUpperCase();
 
       if (tag === 'OPENING') {
-        sh.opening = (r[2] || '').replace(/[^0-9]/g, '');
+        sh.opening = (r[2] || '').replace(/[^0-9.]/g, '');
         sh.side = /dr/i.test(r[3] || '') ? 'dr' : 'cr';
         return;
       }
@@ -1861,15 +2189,15 @@
       if (tag === 'TOTAL' || tag === 'CLOSING' || tag === 'CASH') return;   // recalculated
       if (!/^\d+$/.test(tag)) return;
 
-      var ca = (r[2] || '').replace(/[^0-9]/g, '');
+      var ca = (r[2] || '').replace(/[^0-9.]/g, '');
       var cp = (r[3] || '').trim();
       var cc = /cash|yes|1|\u2713/i.test((r[4] || '').trim()) ? 1 : 0;
-      var da = (r[5] || '').replace(/[^0-9]/g, '');
+      var da = (r[5] || '').replace(/[^0-9.]/g, '');
       var dp = (r[6] || '').trim();
       var dc = /cash|yes|1|\u2713/i.test((r[7] || '').trim()) ? 1 : 0;
 
       sh.rows.push([ da ? fmt(parseFloat(da)) : '', dp,
-                     ca ? fmt(parseFloat(ca)) : '', cp, cc, dc ]);
+                     ca ? fmt(parseFloat(ca)) : '', cp, cc, dc, '', '', newRid() ]);
     });
     return { firm: firm, sheets: sheets };
   }
@@ -1996,8 +2324,12 @@
     if (restoreMode === 'replace') {
       data = { firm: pending.firm || '', sheets: {}, sheetBase: {} };
     }
+    normalizeData();
     Object.keys(pending.sheets).forEach(function (iso) {
       data.sheets[iso] = pending.sheets[iso];
+      data.sheets[iso].rows = withIds(data.sheets[iso].rows);
+      data.sheets[iso].force = true;     // backup wali sheet jaisi hai waisi cloud par — purani lines se milaan nahi
+      delete data.dels[iso];
     });
     if (pending.firm) data.firm = pending.firm;
 
@@ -2012,6 +2344,7 @@
     openSheet(all.length ? all[0] : todayISO());
     store.set(KEY, JSON.stringify(data));
     Object.keys(data.sheets).forEach(function (iso) { pendingSync[iso] = 1; });
+    savePending();
     pushPending();
 
     var n = $('savedNote');
@@ -2065,7 +2398,6 @@
     if (!m) return;
     var iso = m[1];
     if (!ready) { setTimeout(function () { gotoArg(arg); }, 260); return; }
-    if (!data.sheets[iso]) data.sheets[iso] = { opening:'', side:'cr', page:'', rows:[] };
     openSheet(iso);
     var sh = document.querySelector('.sheet');
     if (sh) sh.scrollIntoView({ block:'start' });
@@ -2084,16 +2416,18 @@
       if (!can('ledger_create')) rowsEl.classList.add('readonly-grid');
       store.get(KEY).then(function (raw) {
         if (raw) { try { data = JSON.parse(raw); } catch (e) {} }
-        if (!data.sheets) data.sheets = {};
+        normalizeData(); loadPending();
         $('firmName').value = data.firm || '';
         $('shFirm').textContent = (data.firm || '').trim() || 'Daily Register';
         ready = true;
         openSheet(todayISO());
         setPageRule();
         fit();
+        // pehle cloud se taaza lao (na-bheje din chhor kar), phir pichli dafa ka na-bheja kaam bhejo
         pullAll().then(function (ok) {
           if (ok) { renderList(); openSheet(active || todayISO()); }
           loadParties();
+          pushPending();
         });
         subscribeRealtime();
       });
@@ -2105,7 +2439,7 @@
         if (!can('ledger_create')) rowsEl.classList.add('readonly-grid');
         store.get(KEY).then(function (raw) {
           if (raw) { try { data = JSON.parse(raw); } catch (e2) {} }
-          if (!data.sheets) data.sheets = {};
+          normalizeData(); loadPending();
           $('firmName').value = data.firm || '';
           $('shFirm').textContent = (data.firm || '').trim() || 'Daily Register';
           ready = true;
@@ -2197,7 +2531,7 @@
       return;
     }
     if (key.length < 20) { $('cfgErr').textContent = 'That key looks too short.'; return; }
-    if (/service_role|^sb_secret_/.test(key)) {
+    if (window.APP_CONFIG.isSecretKey(key)) {   // purani JWT wali service_role key bhi pakarti hai
       $('cfgErr').textContent = 'That is the secret key. Use the publishable / anon key instead.'; return;
     }
     sb = makeClient({ url: url, key: key });

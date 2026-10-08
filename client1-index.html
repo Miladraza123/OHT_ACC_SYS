@@ -176,12 +176,10 @@
       });
     }).catch(function () {});
 
-    var refreshedOnce = false;
-    navigator.serviceWorker.addEventListener('controllerchange', function () {
-      if (updating || refreshedOnce) return;   // apna update chal raha ho to
-      refreshedOnce = true;                    // reload hum khud karenge, yahan nahi
-      location.reload();
-    });
+    /* Yahan pehle "controllerchange" par khud location.reload() tha. Pehli
+       install par bhi (clients.claim) aur har naye version par safha banday
+       ke haath ke neeche reload ho jata tha — bill ka draft urh jata. Ab
+       reload SIRF "Update karein" / ⟳ dabane par hota hai (fullUpdate). */
   }
 
   /* ---------- Poora update: naya code AUR naye icons ----------
@@ -276,6 +274,12 @@
     var done = false;
     function finish() {
       if (done) return; done = true;
+      // cache upar saaf hua hai — naya/maujooda SW saari files dobara bhar le (offline ke liye)
+      try {
+        if (navigator.serviceWorker && navigator.serviceWorker.controller) {
+          navigator.serviceWorker.controller.postMessage('REFILL');
+        }
+      } catch (e) {}
       markUpdated();      // reload ke baad banner foran dobara na aaye
       location.replace(location.pathname + '?v=' + Date.now() + location.hash);
     }
@@ -290,7 +294,8 @@
     }
 
     refreshIconLinks();
-    Promise.all([clearAllCaches(), activateNewWorker()])
+    // pehle safai, phir naya worker — warna REFILL se bhari files bhi saaf ho saktin
+    clearAllCaches().then(activateNewWorker)
       .then(function () { setTimeout(finish, 1200); })
       .catch(function () { finish(); });
   }
@@ -325,7 +330,7 @@
 
   /* khud ko dekho — GitHub par nayi shakl aa gayi ho to foran badal jao.
      Sirf meta tag par bharosa nahi, browser use aksar nazarandaz karta hai. */
-  var VERSION = '61';
+  var VERSION = '62';
   (function selfCheck() {
     if (!window.fetch) return;
     // AHEM: yahan pehle root wali index.html mangwai jati thi — magar wo to

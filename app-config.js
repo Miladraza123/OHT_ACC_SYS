@@ -40,3 +40,22 @@ window.APP_CONFIG.loginEmail = function (raw) {
   if (!v) return '';
   return v.indexOf('@') > -1 ? v : (v.toLowerCase() + '@' + window.APP_CONFIG.authDomain);
 };
+
+/* Kya yeh SECRET key hai? (service_role / sb_secret_)
+   Purani Supabase keys JWT hoti hain — "service_role" lafz token mein
+   seedha nahi likha hota, wo payload ke andar base64 mein chhupa hota hai.
+   Is liye sirf text dhoondna kaafi nahi; payload khol kar role dekhte hain. */
+window.APP_CONFIG.isSecretKey = function (raw) {
+  var key = String(raw || '').trim();
+  if (/^sb_secret_/i.test(key) || /service_role/i.test(key)) return true;
+  var parts = key.split('.');
+  if (parts.length !== 3) return false;
+  try {
+    var b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    while (b64.length % 4) b64 += '=';
+    var payload = JSON.parse(atob(b64));
+    return !!payload && payload.role !== 'anon';
+  } catch (e) {
+    return false;
+  }
+};

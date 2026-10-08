@@ -7,7 +7,7 @@
    nahi. Version badhane ke liye sirf CACHE_VERSION number badlein.
    ═══════════════════════════════════════════════════════════════ */
 
-var CACHE_VERSION = 'oht-qtc-v13';
+var CACHE_VERSION = 'oht-qtc-v14';
 
 var SHELL_FILES = [
   './',
@@ -23,16 +23,43 @@ var SHELL_FILES = [
   './icons/icon-512.png',
 ];
 
+/* CDN ki libraries — in ke baghair offline safha khulta hi nahi (supabase-js har
+   app ka pehla script hai). jsDelivr CORS deta hai, is liye "cors" mode se
+   mangwa kar rakhte hain: opaque (status 0) jawab cache mein nahi rakhte. Pata
+   bilkul wohi jo HTML ke <script src> mein hai. */
+var CDN_FILES = [
+  'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2',
+  'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'
+];
+
+/* Apni files ka cache-pata BINA "?..." ke. Shell iframes ko roz naya "?v=" deti
+   hai aur khud "?probe=" mangwati hai — pehle har pata alag jagah cache hota
+   (cache barhta rehta) aur agle din offline wala naya pata cache mein milta hi
+   nahi tha (khali safha). */
+function keyOf(url) {
+  var u = new URL(url);
+  return u.origin === self.location.origin ? u.origin + u.pathname : url;
+}
+
+function fill(cache) {
+  // apni files lazmi (cache:'reload' — browser ka purana HTTP cache nahi)
+  return cache.addAll(SHELL_FILES.map(function (f) { return new Request(f, { cache: 'reload' }); }))
+    .then(function () {
+      // CDN ki koshish — net na ho to install nahi rukta, baad mein istemaal par aa jati hai
+      return Promise.all(CDN_FILES.map(function (u) {
+        return fetch(u, { mode: 'cors', credentials: 'omit', cache: 'reload' }).then(function (res) {
+          if (res && res.ok) return cache.put(u, res);
+        }).catch(function () {});
+      }));
+    });
+}
+
 self.addEventListener('install', function (event) {
-  event.waitUntil(
-    caches.open(CACHE_VERSION).then(function (cache) {
-      return cache.addAll(SHELL_FILES);
-    })
-  );
-  // Naya SW turant "waiting" state mein na atka rahe — lekin activate
-  // hone ke baad bhi hum kabhi bhi khud page ko reload force nahi karte
-  // (wo faisla page ke JS/user par chhoda hai — dekhein index.html)
-  self.skipWaiting();
+  event.waitUntil(caches.open(CACHE_VERSION).then(fill));
+  // skipWaiting YAHAN NAHI. Pehle naya SW foran qabza kar leta tha aur shell
+  // khud reload kar deti thi — banda bill likh raha hota aur draft urh jata.
+  // Ab naya SW "waiting" mein rehta hai; shell banner dikhati hai, aur
+  // "Update karein" dabane par hi SKIP_WAITING aata hai (neeche).
 });
 
 self.addEventListener('activate', function (event) {
@@ -46,6 +73,12 @@ self.addEventListener('activate', function (event) {
   );
 });
 
+function putCopy(key, res) {
+  if (!res || !res.ok || (res.type !== 'basic' && res.type !== 'cors')) return;
+  var copy = res.clone();
+  caches.open(CACHE_VERSION).then(function (cache) { cache.put(key, copy); });
+}
+
 self.addEventListener('fetch', function (event) {
   var url = event.request.url;
 
@@ -56,10 +89,25 @@ self.addEventListener('fetch', function (event) {
   if (url.indexOf('supabase.co') !== -1) return;
   if (url.indexOf('/rest/v1/') !== -1 || url.indexOf('/auth/v1/') !== -1 || url.indexOf('/rpc/') !== -1) return;
 
+  // CDN libraries: pehle cache (offline bhi chale), peeche se taaza kar lo
+  if (CDN_FILES.indexOf(url) !== -1) {
+    event.respondWith(
+      caches.match(url).then(function (cached) {
+        var net = fetch(url, { mode: 'cors', credentials: 'omit' }).then(function (res) {
+          putCopy(url, res);
+          return res;
+        }).catch(function () { return cached; });
+        return cached || net;
+      })
+    );
+    return;
+  }
+
   // Sirf apni hi site ki static files ke liye kuch karo
   if (url.indexOf(self.location.origin) !== 0) return;
 
-  var isHtml = /\.html$|\/$/.test(url.split('?')[0]);
+  var key = keyOf(url);
+  var isHtml = event.request.mode === 'navigate' || /\.html$|\/$/.test(key);
 
   if (isHtml) {
     // ZAROORI: HTML files (index/masters/billing/daily-ledger) ke liye
@@ -68,13 +116,12 @@ self.addEventListener('fetch', function (event) {
     // sirf tab kaam aaye jab internet bilkul na ho.
     event.respondWith(
       fetch(event.request).then(function (res) {
-        if (res && res.ok) {
-          var copy = res.clone();
-          caches.open(CACHE_VERSION).then(function (cache) { cache.put(event.request, copy); });
-        }
+        putCopy(key, res);
         return res;
       }).catch(function () {
-        return caches.match(event.request);
+        return caches.match(key).then(function (hit) {
+          return hit || caches.match(event.request, { ignoreSearch: true });
+        });
       })
     );
     return;
@@ -83,12 +130,9 @@ self.addEventListener('fetch', function (event) {
   // Icons/manifest jaisi cheezein — kam badalti hain, is liye "cache-first"
   // theek hai (tez khulti hain, background mein khud refresh bhi ho jati hain)
   event.respondWith(
-    caches.match(event.request).then(function (cached) {
+    caches.match(key).then(function (cached) {
       var networkFetch = fetch(event.request).then(function (res) {
-        if (res && res.ok) {
-          var copy = res.clone();
-          caches.open(CACHE_VERSION).then(function (cache) { cache.put(event.request, copy); });
-        }
+        putCopy(key, res);
         return res;
       }).catch(function () { return cached; });
       return cached || networkFetch;
@@ -96,7 +140,10 @@ self.addEventListener('fetch', function (event) {
   );
 });
 
-// Page se "SKIP_WAITING" message aaye (jab user "Update" button dabaye)
+// Page se "SKIP_WAITING" message aaye (jab user "Update" button dabaye).
+// "REFILL": shell ne cache saaf kiya (⟳ Update) — saari files dobara bhar lo,
+// warna agle din offline safha khali milta.
 self.addEventListener('message', function (event) {
   if (event.data === 'SKIP_WAITING') self.skipWaiting();
+  if (event.data === 'REFILL') event.waitUntil(caches.open(CACHE_VERSION).then(fill).catch(function () {}));
 });
