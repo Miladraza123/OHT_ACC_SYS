@@ -1436,16 +1436,17 @@ begin
     'public.check_coil_delivery_cap(uuid)',
     'public.check_job_output_cap(uuid)',
     'public.check_job_billable(uuid, uuid)',
-    'public.service_invoice_line_totals(uuid, boolean)'
+    'public.service_invoice_line_totals(uuid, boolean)',
+    -- andar ke helper: sirf SECURITY DEFINER triggers chalate hain (34 ne bhi band kiye the)
+    'public.recalc_coil_balances(uuid)',
+    'public.recalc_service_invoice_totals(uuid)',
+    'public.allocate_conversion_cost(uuid)'
   ] loop
     execute 'revoke all on function ' || f || ' from public, anon, authenticated';
   end loop;
 
   foreach f in array array[
-    'public.close_coil(uuid, text, text)',
-    'public.recalc_coil_balances(uuid)',
-    'public.recalc_service_invoice_totals(uuid)',
-    'public.allocate_conversion_cost(uuid)'
+    'public.close_coil(uuid, text, text)'
   ] loop
     execute 'revoke all on function ' || f || ' from public, anon';
     execute 'grant execute on function ' || f || ' to authenticated';
