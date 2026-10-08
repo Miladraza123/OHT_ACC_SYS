@@ -791,7 +791,11 @@ begin
 
   for ln in
     (
-      select vl.id as line_id, vl.qty, vl.rate, v.vtype, v.vdate, v.id as voucher_id,
+      -- rate sale unit (misal ton) ka hota hai, qty base unit (kg) mein —
+      -- costing ke liye base unit ka rate: rate / unit_factor
+      select vl.id as line_id, vl.qty,
+             vl.rate / coalesce(nullif(vl.unit_factor, 0), 1) as rate,
+             v.vtype, v.vdate, v.id as voucher_id,
              v.loading_amt, v.cartage_amt, v.cutting_amt,
              v.loading_on, v.cartage_on, v.cutting_on,
              null::numeric as ret_cost,
@@ -863,7 +867,7 @@ begin
     in_qty := null;
 
     if ln.vtype = 'purchase' then
-      select coalesce(sum(qty * rate), 0) into voucher_total
+      select coalesce(sum(qty * rate / coalesce(nullif(unit_factor, 0), 1)), 0) into voucher_total
         from voucher_lines where voucher_id = ln.voucher_id;
 
       extra := (case when ln.loading_on then ln.loading_amt else 0 end)
