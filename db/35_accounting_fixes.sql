@@ -1240,6 +1240,103 @@ $function$;
 
 
 -- ============================================================
+--  HISSA 5b — Merge mein number ko number ki tarah milana
+--
+--  MASLA: merge_diff / merge_one_line (db/08) har value ko TEXT bana kar
+--  milati hain. Ab line ka amount server par 2 decimal mein banta hai
+--  (HISSA 3) — DB "10400.00" rakhta hai jabke app ke paas 10400 hai.
+--  Text mein yeh alag hain, is liye har purane bill ki edit par
+--  "kisi aur ne bhi isi waqt badla" aata aur kuch save na hota.
+--  HAL: dono taraf number hon (ya number jaisa text) to numeric se
+--  milao; warna pehle ki tarah text.
+-- ============================================================
+
+create or replace function public.merge_same(a jsonb, b jsonb)
+returns boolean
+language sql
+immutable
+set search_path = public
+as $$
+  select case
+    when a is null or b is null or jsonb_typeof(a) = 'null' or jsonb_typeof(b) = 'null'
+      then coalesce(jsonb_typeof(a), 'null') = coalesce(jsonb_typeof(b), 'null')
+    when (a #>> '{}') ~ '^\s*-?[0-9]+(\.[0-9]+)?\s*$' and (b #>> '{}') ~ '^\s*-?[0-9]+(\.[0-9]+)?\s*$'
+      then (a #>> '{}')::numeric = (b #>> '{}')::numeric
+    else (a #>> '{}') is not distinct from (b #>> '{}')
+  end
+$$;
+
+create or replace function public.merge_diff(
+  p_original jsonb, p_new jsonb, p_current jsonb, p_ignore text[]
+)
+returns jsonb
+language plpgsql
+set search_path = public
+as $function$
+declare
+  merged    jsonb := '{}'::jsonb;
+  conflicts text[] := array[]::text[];
+  key_name  text;
+begin
+  for key_name in select jsonb_object_keys(p_new) loop
+    if key_name = any(p_ignore) then continue; end if;
+
+    if merge_same(p_new -> key_name, p_original -> key_name) then
+      merged := merged || jsonb_build_object(key_name, p_current -> key_name);
+    elsif merge_same(p_current -> key_name, p_original -> key_name) then
+      merged := merged || jsonb_build_object(key_name, p_new -> key_name);
+    elsif merge_same(p_new -> key_name, p_current -> key_name) then
+      merged := merged || jsonb_build_object(key_name, p_new -> key_name);
+    else
+      conflicts := array_append(conflicts, key_name);
+    end if;
+  end loop;
+
+  if array_length(conflicts, 1) > 0 then
+    return jsonb_build_object('conflict', true, 'fields', to_jsonb(conflicts));
+  end if;
+  return jsonb_build_object('conflict', false, 'merged', merged);
+end;
+$function$;
+
+create or replace function public.merge_one_line(
+  p_original jsonb, p_new jsonb, p_current jsonb, p_ignore text[]
+)
+returns jsonb
+language plpgsql
+set search_path = public
+as $function$
+declare
+  merged       jsonb := '{}'::jsonb;
+  key_name     text;
+  has_conflict boolean := false;
+begin
+  for key_name in select jsonb_object_keys(p_new) loop
+    if key_name = any(p_ignore) then continue; end if;
+
+    if merge_same(p_new -> key_name, p_original -> key_name) then
+      merged := merged || jsonb_build_object(key_name, p_current -> key_name);
+    elsif merge_same(p_current -> key_name, p_original -> key_name) then
+      merged := merged || jsonb_build_object(key_name, p_new -> key_name);
+    elsif merge_same(p_new -> key_name, p_current -> key_name) then
+      merged := merged || jsonb_build_object(key_name, p_new -> key_name);
+    else
+      has_conflict := true;
+    end if;
+  end loop;
+
+  if has_conflict then
+    return jsonb_build_object('conflict', true);
+  end if;
+  return jsonb_build_object('conflict', false, 'merged', merged);
+end;
+$function$;
+
+revoke all on function public.merge_same(jsonb, jsonb) from public, anon;
+grant execute on function public.merge_same(jsonb, jsonb) to authenticated;
+
+
+-- ============================================================
 --  HISSA 6 — Ijazat (db/27 ka usool)
 --
 --  Nayi andar wali functions bahar se band — yeh sirf triggers aur
