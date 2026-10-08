@@ -152,7 +152,7 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | 7.1 | Mobile par site kholein | Sahi khulti hai |
 | 7.2 | Phone par **Install** karein | Home screen par icon |
 | 7.3 | Internet band kar ke app kholein | Purana data dikhta hai, "Offline" likha aata hai |
-| 7.4 | Internet band mein bill banayein | Rok deta hai — chup-chaap gum nahi hota |
+| 7.4 | Internet band mein bill banayein | "Offline — save queued" aata hai; internet aate hi **sirf aik dafa** server par jata hai, gum nahi hota |
 | 7.5 | Bill **print** karein | Firm ka naam, logo, terms — sab theek |
 | 7.6 | Reports → **Aging** | Sahi buckets |
 | 7.7 | Masters → **Period Lock** lagayein | Purane bill band ho gaye |
@@ -186,3 +186,5 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | "permission denied for function" | `db/27_security_hardening.sql` reh gaya hai |
 | Change Password par "yeh hissa database mein nahi hai" | `db/32_change_own_password.sql` reh gaya hai |
 | Cutting size mein Width/Length ke alag unit nazar nahi aate | `db/33_cutting_size_units.sql` reh gaya hai |
+| Cutting job save par "Could not find the 'width' column" | `db/36_cutting_fixes.sql` reh gaya hai |
+| Aging report khulti nahi (404) | `db/35_accounting_fixes.sql` reh gaya hai |

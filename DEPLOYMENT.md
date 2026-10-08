@@ -124,8 +124,32 @@ SQL Editor mein is tarteeb se:
 | 31 | `31_user_management.sql` | User banana aur password badalna app se — **lazmi** |
 | 32 | `32_change_own_password.sql` | Apna password khud badalna (sidebar) — **lazmi** |
 | 33 | `33_cutting_size_units.sql` | Cutting size mein Width/Length ke alag unit (mm/inch/ft) |
+| 34 | `34_security_fixes.sql` | Merge RPCs par taala, band user ko kuch nahi dikhta, Setup sirf admin — **lazmi** |
+| 35 | `35_accounting_fixes.sql` | Trial Balance mein returns, period lock dono tareekhein, totals server par, costing, Aging — **lazmi** |
+| 36 | `36_cutting_fixes.sql` | `width` column, delivery ki hadd, cutting state guards, invoice totals server par — **lazmi** |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
+
+### Pehle se chalta hua system (live) — sirf 34, 35, 36
+
+Jis database par 01–33 pehle chal chuki hain, wahan sirf nayi teen files
+**34 → 35 → 36** isi tarteeb se chalayein. Teeno do baar chalana mehfooz
+hai. Pehle backup le lein.
+
+- **35** aakhir mein ek dafa poori costing dobara ginti hai (avg cost,
+  stock, COGS). Sirf un items ka purana COGS badalta hai jin ka stock
+  kabhi minus mein gaya, jin par stock adjustment tha, ya jin ki aik din
+  ki entries ghalat tarteeb mein thin. Purane bills ke totals NAHI
+  badalte — agle save par khud theek ho jate hain (NOTICE batata hai
+  kitne mel nahi khate).
+- **36** `cutting_job_outputs.width_mm` ko `width` kar deti hai — sirf
+  agar `width` pehle se na ho. Purana over-delivery data nahi badalta;
+  file ke aakhir mein usay dhoondne ki queries hain.
+- Naye usool: cancel ab `*_cancel` permission maangta hai; delivered/
+  invoiced job aur invoiced challan band ho jate hain; Setup sirf admin;
+  band (inactive) user ko kuch nahi dikhta. Backup ke liye
+  `SUPABASE_SERVICE_KEY` secret daalein ya `BACKUP_EMAIL` active admin ho,
+  warna backup ⚠ ADHOORA aayega.
 
 > **26 ko chhorna mat.** Yeh file live system se milaan kar ke banai gayi
 > hai. Is ke baghair `item_units` table nahi banti (multi-unit billing kaam
