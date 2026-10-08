@@ -858,7 +858,7 @@
   }
   function calcPieceWeight(wVal, wU, lVal, lU, thicknessMm) {
     var wft = toFeetVal(wVal, wU), lft = toFeetVal(lVal, lU), t = num(thicknessMm);
-    if (!wft || !lft || !t) return 0;
+    if (!(wft > 0) || !(lft > 0) || !(t > 0)) return 0;   // manfi naap ka weight nahi banta
     return round2(wft * lft * t * 0.729);
   }
   function money(n) {
@@ -905,7 +905,8 @@
     var t = $('toast');
     t.textContent = msg; t.classList.toggle('bad', !!bad); t.classList.add('on');
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { t.classList.remove('on'); }, bad ? 4200 : 2400);
+    // lamba error message parhne ka waqt bhi mile
+    toastTimer = setTimeout(function () { t.classList.remove('on'); }, bad ? Math.max(4200, String(msg).length * 60) : 2400);
   }
   function sayErr(err, what) {
     var m = (err && err.message) || '';
@@ -1841,19 +1842,43 @@
       });
     });
   }
+  /* MASLA: istemaal shuda coils wala inward \u2014 message gol-mol tha aur
+     coils ka hisaab purana (screen load ke waqt ka) dekha jata tha.
+     HAL: DB se taaza coils dekh kar saaf batao kaunsi coil par kya hua;
+     cancel do qadam mein, doosra fail ho to pehla wapas. */
   function cancelInward() {
-    var used = edLines.some(function (l) { return l.used; });
-    if (used) { toast('In coils par kaam ho chuka hai \u2014 cancel nahi ho sakta', true); return; }
-    confirmBox('Inward cancel karein?', 'Is inward ki coils bhi cancel ho jayengi.', 'Cancel karein')
-      .then(function (ok) {
-        if (!ok) return;
-        Promise.all([
-          sb.from('material_inwards').update({ status:'cancelled' }).eq('id', doc.id),
-          sb.from('coils').update({ status:'cancelled' }).eq('inward_id', doc.id)
-        ]).then(function (rs) {
-          for (var i = 0; i < rs.length; i++) if (rs[i].error) { sayErr(rs[i].error, 'Cancel'); return; }
-          toast('Inward cancel ho gaya'); closeEd(); loadAll();
-        });
+    var d = doc;
+    sb.from('coils').select('coil_serial,status,consumed_weight,delivered_weight,returned_weight,closing_adjust_weight')
+      .eq('inward_id', d.id).is('deleted_at', null).then(function (rc) {
+        if (rc.error) { sayErr(rc.error, 'Cancel'); return; }
+        var used = (rc.data || []).map(function (c) {
+          var w = [];
+          if (num(c.consumed_weight))  w.push('job ' + kg(c.consumed_weight) + ' KG');
+          if (num(c.delivered_weight)) w.push('delivery ' + kg(c.delivered_weight) + ' KG');
+          if (num(c.returned_weight))  w.push('wapsi ' + kg(c.returned_weight) + ' KG');
+          if (c.status === 'closed')   w.push('coil band');
+          return w.length ? c.coil_serial + ' (' + w.join(', ') + ')' : null;
+        }).filter(Boolean);
+        if (used.length) {
+          toast('Inward cancel nahi ho sakta \u2014 in coils par kaam ho chuka hai: ' + used.join('; ') +
+                '. Pehle in ke job / challan / return cancel karein (ya coil dobara kholein), phir inward cancel karein.', true);
+          return;
+        }
+        confirmBox('Inward cancel karein?', 'Is inward ki coils bhi cancel ho jayengi.', 'Cancel karein')
+          .then(function (ok) {
+            if (!ok) return;
+            sb.from('material_inwards').update({ status:'cancelled' }).eq('id', d.id).select('id').then(function (r1) {
+              if (r1.error || !(r1.data || []).length) { sayErr(r1.error || new Error('Inward cancel nahi hua (ijazat?)'), 'Cancel'); return; }
+              return sb.from('coils').update({ status:'cancelled' }).eq('inward_id', d.id).then(function (r2) {
+                if (r2.error) {
+                  // coils cancel na huin \u2014 inward ko wapas active karo taake dono ek jaise rahein
+                  return sb.from('material_inwards').update({ status:d.status || 'active' }).eq('id', d.id)
+                    .then(function () { sayErr(r2.error, 'Cancel'); });
+                }
+                toast('Inward cancel ho gaya'); closeEd(); loadAll();
+              });
+            });
+          });
       });
   }
 
@@ -1880,7 +1905,7 @@
   function lUnit(o) { return (o && (o.length_unit || o.size_unit)) || 'mm'; }
 
   function newJob() {
-    doc = null; jobInputs = []; jobOutputs = [];
+    doc = null; jobInputs = []; jobOutputs = []; jobOrig = { ins:{}, outs:{} };
     openEd('New Cutting Job', 'job', jobForm({ jdate:todayPKT(), warehouse_id:defWarehouse() }), saveJob);
     wireJob(false);
   }
@@ -1889,9 +1914,25 @@
     doc = j;
     Promise.all([
       sb.from('cutting_job_inputs').select('*').eq('job_id', id).order('line_no'),
-      sb.from('cutting_job_outputs').select('*').eq('job_id', id).order('line_no')
+      sb.from('cutting_job_outputs').select('*').eq('job_id', id).order('line_no'),
+      // Job ka maal challan par gaya ya invoice ban gaya? To job lock.
+      sb.from('delivery_challan_lines').select('output_id,delivery_challans(dno,status,deleted_at)').eq('job_id', id),
+      sb.from('service_invoice_jobs').select('invoice_id,service_invoices(sino,status,deleted_at)').eq('job_id', id)
     ]).then(function (r) {
+      if (r[0].error || r[1].error) { sayErr(r[0].error || r[1].error, 'Load'); return; }
+      var lockBy = [];
+      (r[2].data || []).forEach(function (x) {
+        var d = x.delivery_challans;
+        if (d && d.status !== 'cancelled' && !d.deleted_at && lockBy.indexOf(d.dno) < 0) lockBy.push(d.dno);
+      });
+      (r[3].data || []).forEach(function (x) {
+        var s = x.service_invoices;   // invoice nazar na aaye (ijazat) to bhi billed hi samjho
+        if (!s || (s.status !== 'cancelled' && !s.deleted_at)) lockBy.push(s ? s.sino : 'Service invoice');
+      });
       jobInputs  = (r[0].data || []).map(function (x) { return { _k:++lineSeq, id:x.id, coil_id:x.coil_id, input_weight:x.input_weight }; });
+      jobOrig = { ins:{}, outs:{} };
+      (r[0].data || []).forEach(function (x) { jobOrig.ins[x.id] = x; });
+      (r[1].data || []).forEach(function (x) { jobOrig.outs[x.id] = x; });
       jobOutputs = (r[1].data || []).map(function (x) {
         return { _k:++lineSeq, id:x.id, coil_id:x.coil_id,
                  size_unit:x.size_unit || 'mm',
@@ -1902,14 +1943,23 @@
                  pieces:x.pieces == null ? '' : x.pieces,
                  output_weight:x.output_weight, remarks:x.remarks || '' };
       });
-      var ro = j.status === 'cancelled' || !can('cutting_job_edit');
+      /* MASLA: delivered/invoiced job edit hota tha — outputs dobara ban
+         jate the. HAL: aisa job sirf parhne ke liye; cancel bhi nahi. */
+      var locked = j.status !== 'cancelled' && lockBy.length > 0;
+      var ro = j.status === 'cancelled' || locked || !can('cutting_job_edit');
       openEd(j.jno || 'Job', 'job', jobForm(j, ro), ro ? null : saveJob,
-             (j.status !== 'cancelled' && can('cutting_job_cancel')) ? cancelJob : null);
+             (j.status !== 'cancelled' && !locked && can('cutting_job_cancel')) ? cancelJob : null);
+      if (locked) {
+        $('edBody').insertAdjacentHTML('afterbegin', '<div class="card" id="jobLock"><div class="hint neg">' +
+          'Is job ka maal ' + esc(lockBy.join(', ')) + ' mein ja chuka hai — ab yeh job badla ya cancel ' +
+          'nahi ho sakta. Tabdeeli chahiye to pehle wo challan / invoice cancel karein.</div></div>');
+      }
       if (!ro) wireJob(false);
       else { drawJobInputs(true); drawJobOutputs(true); }
       $('edSave').style.display = ro ? 'none' : '';
     });
   }
+  var jobOrig = { ins:{}, outs:{} };   // DB mein jo lines thin — save par sirf farq likhte hain
   function jobForm(j, ro) {
     j = j || {};
     var dis = ro ? ' disabled' : '';
@@ -2009,17 +2059,17 @@
         '</div>' +
         '<div class="f2">' +
           '<div class="f num" style="margin-bottom:7px"><label>Width</label>' +
-            '<input data-f="width" type="number" step="0.01" value="' + esc(l.width) + '"' + dis + '>' +
+            '<input data-f="width" type="number" min="0" step="0.01" value="' + esc(l.width) + '"' + dis + '>' +
             (hasSizeUnits ? '<div style="margin-top:6px">' + unitSw('width_unit', DIM_UNITS, wUnit(l)) + '</div>' : '') +
           '</div>' +
           '<div class="f num" style="margin-bottom:7px"><label>Length</label>' +
-            '<input data-f="length" type="number" step="0.01" value="' + esc(l.length) + '" placeholder="\u2014"' + dis + '>' +
+            '<input data-f="length" type="number" min="0" step="0.01" value="' + esc(l.length) + '" placeholder="\u2014"' + dis + '>' +
             (hasSizeUnits ? '<div style="margin-top:6px">' + unitSw('length_unit', DIM_UNITS, lUnit(l)) + '</div>' : '') +
           '</div>' +
         '</div>' +
         '<div class="f2">' +
           '<div class="f num" style="margin-bottom:0"><label>Pieces</label>' +
-            '<input data-f="pieces" type="number" step="1" value="' + esc(l.pieces) + '" placeholder="\u2014"' + dis + '></div>' +
+            '<input data-f="pieces" type="number" min="0" step="1" value="' + esc(l.pieces) + '" placeholder="\u2014"' + dis + '></div>' +
           '<div class="f num" style="margin-bottom:0"><label>Weight KG</label>' +
             '<input data-f="output_weight" type="number" step="0.001" value="' + esc(l.output_weight) + '"' + dis + '></div>' +
         '</div>' +
@@ -2166,8 +2216,15 @@
   function recalcRowWeight(k) {
     var l = jobOutputs.filter(function (x) { return x._k === k; })[0]; if (!l) return;
     var c = byId(coils, l.coil_id);
-    var perPc = calcPieceWeight(l.width, wUnit(l), l.length, lUnit(l), c && c.thickness_mm);
-    if (!perPc) return;
+    /* MASLA: manfi width par weight bhi manfi ban jata tha. HAL: manfi
+       naap qubool nahi (weight 0 + message); 0 likha ho to weight 0.
+       Khana khali ho to likha hua weight waisa hi rehta hai. */
+    var typed = function (v) { return String(v == null ? '' : v).trim() !== ''; };
+    var neg  = [l.width, l.length, l.pieces].some(function (v) { return typed(v) && num(v) < 0; });
+    var zero = [l.width, l.length].some(function (v) { return typed(v) && num(v) === 0; });
+    if (neg) toast('Width / Length / Pieces manfi nahi ho sakte', true);
+    var perPc = (neg || zero) ? 0 : calcPieceWeight(l.width, wUnit(l), l.length, lUnit(l), c && c.thickness_mm);
+    if (!perPc && !neg && !zero) return;
     var total = round2(perPc * (num(l.pieces) || 0));
     l.output_weight = total;
     markDirty();
@@ -2190,46 +2247,112 @@
       toast('Completed karne se pehle cutting sizes daalein', true); return false;
     }
     if (head.status === 'completed') { head.completed_at = new Date().toISOString(); }
+    if (jobOutputs.some(function (l) { return num(l.width) < 0 || num(l.length) < 0 || num(l.pieces) < 0; })) {
+      toast('Width, Length aur Pieces manfi nahi ho sakte', true); return false;
+    }
+    var inCoils = ins.map(function (l) { return l.coil_id; });
+    if (outs.some(function (l) { return inCoils.indexOf(l.coil_id) < 0; })) {
+      toast('Har cutting size ki coil input mein honi chahiye', true); return false;
+    }
 
-    var step = doc
-      ? sb.from('cutting_jobs').update(head).eq('id', doc.id).select().single()
-      : sb.from('cutting_jobs').insert(head).select().single();
+    /* MASLA: pehle saare outputs delete kar ke dobara daalte the. Challan
+       wale output ka delete FK par fail hota, error nazar-andaz hota aur
+       outputs dobara ban jate (maal double). HAL: purani lines id se wahin
+       update, nayi insert, sirf hatayi gayi delete — har result check. */
+    var inRow = function (l, i, jid) {
+      return { job_id:jid, coil_id:l.coil_id, input_weight:num(l.input_weight), line_no:i };
+    };
+    var outRow = function (l, i, jid) {
+      /* size_unit purani reports ke liye rakha hai — usi mein width
+         ka unit likhte hain, taake wo waise hi chalti rahein. */
+      var row = { job_id:jid, coil_id:l.coil_id, size_unit:wUnit(l),
+                  width:l.width === '' ? null : num(l.width),
+                  length:l.length === '' ? null : num(l.length),
+                  pieces:l.pieces === '' ? 0 : num(l.pieces),
+                  output_weight:num(l.output_weight),
+                  remarks:l.remarks, line_no:i };
+      // db/33 abhi na chali ho to yeh column bhejna error de dega
+      if (hasSizeUnits) {
+        row.width_unit  = wUnit(l);
+        row.length_unit = lUnit(l);
+      }
+      return row;
+    };
+    var keep = {};
+    ins.concat(outs).forEach(function (l) { if (l.id) keep[l.id] = 1; });
+    var delOuts = Object.keys(jobOrig.outs).filter(function (id) { return !keep[id]; });
+    var delIns  = Object.keys(jobOrig.ins).filter(function (id) { return !keep[id]; });
 
-    return step.then(function (r) {
+    // Hatayi gayi size kisi challan mein darj ho to kuch bhi likhne se pehle rok do
+    var pre = delOuts.length
+      ? sb.from('delivery_challan_lines').select('output_id,delivery_challans(dno,status)').in('output_id', delOuts)
+      : Promise.resolve({ data:[] });
+
+    return pre.then(function (pr) {
+      if (pr.error) throw pr.error;
+      var used = [];
+      (pr.data || []).forEach(function (x) {
+        var d = x.delivery_challans || {};
+        var t = (d.dno || 'challan') + (d.status === 'cancelled' ? ' (cancelled)' : '');
+        if (used.indexOf(t) < 0) used.push(t);
+      });
+      if (used.length) {
+        toast('Jo cutting size aap hata rahe hain wo challan ' + used.join(', ') +
+              ' mein darj hai — hataya nahi ja sakta. Size wapas rakhein; sirf weight/naap badal sakte hain.', true);
+        return false;
+      }
+      var step = doc
+        ? sb.from('cutting_jobs').update(head).eq('id', doc.id).select().single()
+        : sb.from('cutting_jobs').insert(head).select().single();
+      return step.then(function (r) {
+        if (r.error) throw r.error;
+        var job = r.data;
+        return withRollback('cutting_jobs', job.id, !doc, function () {
+          return writeLines('cutting_job_inputs', jobOrig.ins, ins, function (l, i) { return inRow(l, i, job.id); })
+            .then(function () {
+              return writeLines('cutting_job_outputs', jobOrig.outs, outs, function (l, i) { return outRow(l, i, job.id); });
+            })
+            .then(function () { return delLines('cutting_job_outputs', jobOrig.outs, delOuts); })
+            .then(function () { return delLines('cutting_job_inputs', jobOrig.ins, delIns); })
+            .then(function () { toast(doc ? 'Job update ho gaya' : 'Job ban gaya'); });
+        });
+      });
+    });
+  }
+  /* Lines ko id se likhna: badli hui update, nayi insert. Purane document
+     par kamyab hissa jobOrig mein yaad rakhte hain — dobara Save par nayi
+     line do dafa nahi banti. Har result ka error check hota hai. */
+  function lineChanged(row, o) {
+    return Object.keys(row).some(function (k) {
+      return String(row[k] == null ? '' : row[k]) !== String(o[k] == null ? '' : o[k]);
+    });
+  }
+  // Ek ek kar ke (parallel nahi) — warna coil ka total trigger purana hisaab likh deta hai
+  function writeLines(table, orig, lines, mk) {
+    return lines.reduce(function (chain, l, i) {
+      return chain.then(function () {
+        var row = mk(l, i);
+        if (l.id) {
+          if (orig[l.id] && !lineChanged(row, orig[l.id])) return null;
+          return sb.from(table).update(row).eq('id', l.id).select('id').then(function (r) {
+            if (r.error) throw r.error;
+            if (!r.data || !r.data.length) throw new Error('Line update nahi hui (shayad ijazat nahi) — page refresh kar ke dobara dekhein');
+            if (doc) orig[l.id] = Object.assign({ id:l.id }, row);
+          });
+        }
+        return sb.from(table).insert(row).select('id').single().then(function (r) {
+          if (r.error) throw r.error;
+          if (doc) { l.id = r.data.id; orig[l.id] = Object.assign({ id:l.id }, row); }
+        });
+      });
+    }, Promise.resolve());
+  }
+  function delLines(table, orig, ids) {
+    if (!ids.length) return Promise.resolve();
+    return sb.from(table).delete().in('id', ids).select('id').then(function (r) {
       if (r.error) throw r.error;
-      var job = r.data;
-      // Outputs pehle hatao (warna input hatane par output ka coil check fail hoga)
-      return withRollback('cutting_jobs', job.id, !doc, function () {
-      return sb.from('cutting_job_outputs').delete().eq('job_id', job.id).then(function () {
-        return sb.from('cutting_job_inputs').delete().eq('job_id', job.id);
-      }).then(function () {
-        return sb.from('cutting_job_inputs').insert(ins.map(function (l, i) {
-          return { job_id:job.id, coil_id:l.coil_id, input_weight:num(l.input_weight), line_no:i };
-        }));
-      }).then(function (r2) {
-        if (r2.error) throw r2.error;
-        if (!outs.length) return { error:null };
-        return sb.from('cutting_job_outputs').insert(outs.map(function (l, i) {
-          /* size_unit purani reports ke liye rakha hai — usi mein width
-             ka unit likhte hain, taake wo waise hi chalti rahein. */
-          var row = { job_id:job.id, coil_id:l.coil_id, size_unit:wUnit(l),
-                      width:l.width === '' ? null : num(l.width),
-                      length:l.length === '' ? null : num(l.length),
-                      pieces:l.pieces === '' ? 0 : num(l.pieces),
-                      output_weight:num(l.output_weight),
-                      remarks:l.remarks, line_no:i };
-          // db/33 abhi na chali ho to yeh column bhejna error de dega
-          if (hasSizeUnits) {
-            row.width_unit  = wUnit(l);
-            row.length_unit = lUnit(l);
-          }
-          return row;
-        }));
-      }).then(function (r3) {
-        if (r3 && r3.error) throw r3.error;
-        toast(doc ? 'Job update ho gaya' : 'Job ban gaya');
-      });
-      });
+      if ((r.data || []).length !== ids.length) throw new Error('Kuch purani lines delete nahi huin (shayad ijazat nahi) — page refresh kar ke dobara dekhein');
+      if (doc) ids.forEach(function (id) { delete orig[id]; });
     });
   }
   function cancelJob() {
@@ -2255,14 +2378,10 @@
     var d = byId(challans, id); if (!d) return;
     doc = d;
     sb.from('delivery_challan_lines').select('*').eq('challan_id', id).order('line_no').then(function (r) {
-      // print ke liye har line ki cutting size (width/pieces) chahiye
+      // print ke liye har line ki cutting size (width/length + dono ke unit, pieces) chahiye
       var outIds = (r.data || []).map(function (x) { return x.output_id; }).filter(Boolean);
-      if (outIds.length) {
-        sb.from('cutting_job_outputs').select('id,width,length,size_unit,pieces').in('id', outIds)
-          .then(function (o) {
-            (o.data || []).forEach(function (x) { readyCache[x.id] = x; });
-          });
-      }
+      return loadOutputSizes(outIds).then(function () { return r; });
+    }).then(function (r) {
       chLines = (r.data || []).map(function (x) {
         return { _k:++lineSeq, id:x.id, coil_id:x.coil_id, job_id:x.job_id, output_id:x.output_id,
                  expected_weight:x.expected_weight, delivered_weight:x.delivered_weight,
@@ -2365,22 +2484,22 @@
   /* Weighbridge ka chhota farq rozana ki baat hai — us par kuch nahi kehte.
      Magar bara farq ghalti ka nishan ho sakta hai, is liye batate hain.
      Rokte nahi — weight slip par jo tola gaya, wohi sach hai. */
-  function varianceLimitPct() {
-    var v = num(settings && settings.delivery_variance_pct);
-    return v > 0 ? v : 1;
+  /* MASLA: setting 0 ho to client 10% / 25 KG maan leta tha, server
+     (trg_check_coil_limits) 0 hi. HAL: server wala usool — default sirf
+     tab jab setting mojood hi na ho (coalesce), 0 ka matlab 0. */
+  function setNum(k, def) {
+    var v = settings ? settings[k] : null;
+    return v == null || v === '' ? def : num(v);
   }
+  function varianceLimitPct() { return setNum('delivery_variance_pct', 1); }
   /* Coil ke balance par kitna manfi chal sakta hai. Chhota farq tolai ka
      hai; be-tuka number typo hai. Hadd = received ka <faisad>%, ya kam se
      kam <min KG> \u2014 jo bara ho. Dono Settings se badalte hain. */
   function coilTolerance(c) {
-    var pct = num(settings && settings.balance_tolerance_pct);
-    if (!(pct > 0)) pct = 10;
+    var pct = setNum('balance_tolerance_pct', 10);
     return Math.max(num(c && c.received_weight) * pct / 100, varianceMinKg());
   }
-  function varianceMinKg() {
-    var v = num(settings && settings.delivery_variance_min_kg);
-    return v > 0 ? v : 25;
-  }
+  function varianceMinKg() { return setNum('delivery_variance_min_kg', 25); }
   function bigVarianceNote(expected, actual) {
     var over = num(actual) - num(expected);
     if (over <= 0 || !num(expected)) return '';
@@ -2423,6 +2542,17 @@
     });
     if ($('addCh')) $('addCh').addEventListener('click', pickReadyMaterial);
   }
+  /* Cutting size ki poori tafseel (width/length ke apne unit) readyCache mein.
+     ready_for_delivery_v mein unit nahi hote, is liye seedha outputs se. */
+  function loadOutputSizes(ids) {
+    ids = ids.filter(function (x, i) { return x && ids.indexOf(x) === i; });
+    if (!ids.length) return Promise.resolve();
+    return sb.from('cutting_job_outputs')
+      .select('id,width,length,size_unit,pieces' + (hasSizeUnits ? ',width_unit,length_unit' : ''))
+      .in('id', ids)
+      .then(function (o) { (o.data || []).forEach(function (x) { readyCache[x.id] = x; }); },
+            function () {});
+  }
   function pickReadyMaterial() {
     var pid = val('dParty');
     if (!pid) { toast('Pehle party chunein', true); return; }
@@ -2432,21 +2562,31 @@
         var rows = (r.data || []).filter(function (x) {
           return !chLines.some(function (l) { return l.output_id === x.output_id; });
         });
-        if (!rows.length) { toast('Is party ka koi maal delivery ke liye tayyar nahi'); return; }
-        openPicker('Delivery ke liye tayyar maal', rows, function (x) {
-          return { key:x.output_id,
-                   nm:x.coil_serial + (x.width ? ' \u00b7 ' + sizeText(x) : ''),
-                   sub:x.jno + ' \u00b7 ' + (x.pieces || 0) + ' pcs',
-                   amt:kg(x.pending_weight) + ' kg' };
-        }, function (sel) {
-          sel.forEach(function (x) {
-            readyCache[x.output_id] = { id:x.output_id, width:x.width, length:x.length,
-                                        size_unit:x.size_unit, pieces:x.pieces };
-            chLines.push({ _k:++lineSeq, id:null, coil_id:x.coil_id, job_id:x.job_id,
-                           output_id:x.output_id, expected_weight:x.pending_weight,
-                           delivered_weight:x.pending_weight, variance_reason:'', remarks:'' });
+        /* MASLA: draft job ka maal bhi picker mein aata tha (save par server
+           rokta). HAL: sirf Completed jobs ka maal dikhao. Job nazar na aaye
+           (ijazat) to line rehne do — server phir bhi rokta hai. */
+        var jids = rows.map(function (x) { return x.job_id; }).filter(function (x, i, a) { return x && a.indexOf(x) === i; });
+        var jq = jids.length ? sb.from('cutting_jobs').select('id,status').in('id', jids) : Promise.resolve({ data:[] });
+        return Promise.all([jq, loadOutputSizes(rows.map(function (x) { return x.output_id; }))]).then(function (q) {
+          if (q[0].error) { sayErr(q[0].error, 'Load'); return; }
+          var st = {};
+          (q[0].data || []).forEach(function (j) { st[j.id] = j.status; });
+          rows = rows.filter(function (x) { return !st[x.job_id] || st[x.job_id] === 'completed'; });
+          if (!rows.length) { toast('Is party ka koi maal delivery ke liye tayyar nahi (sirf Completed job ka maal jata hai)'); return; }
+          openPicker('Delivery ke liye tayyar maal', rows, function (x) {
+            var o = readyCache[x.output_id];
+            return { key:x.output_id,
+                     nm:x.coil_serial + (o && o.width != null ? ' \u00b7 ' + sizeTight(o) : ''),
+                     sub:x.jno + ' \u00b7 ' + (x.pieces || 0) + ' pcs',
+                     amt:kg(x.pending_weight) + ' kg' };
+          }, function (sel) {
+            sel.forEach(function (x) {
+              chLines.push({ _k:++lineSeq, id:null, coil_id:x.coil_id, job_id:x.job_id,
+                             output_id:x.output_id, expected_weight:x.pending_weight,
+                             delivered_weight:x.pending_weight, variance_reason:'', remarks:'' });
+            });
+            markDirty(); drawChLines(false);
           });
-          markDirty(); drawChLines(false);
         });
       });
   }
@@ -2467,7 +2607,8 @@
       if (r.error) throw r.error;
       var ch = r.data;
       return withRollback('delivery_challans', ch.id, !doc, function () {
-      return sb.from('delivery_challan_lines').delete().eq('challan_id', ch.id).then(function () {
+      return sb.from('delivery_challan_lines').delete().eq('challan_id', ch.id).then(function (rd) {
+        if (rd.error) throw rd.error;   // delete fail ho to dobara insert nahi (warna lines double)
         return sb.from('delivery_challan_lines').insert(good.map(function (l, i) {
           return { challan_id:ch.id, coil_id:l.coil_id, job_id:l.job_id || null,
                    output_id:l.output_id || null,
@@ -2653,7 +2794,8 @@
       if (r.error) throw r.error;
       var ret = r.data;
       return withRollback('material_returns', ret.id, !doc, function () {
-      return sb.from('material_return_lines').delete().eq('return_id', ret.id).then(function () {
+      return sb.from('material_return_lines').delete().eq('return_id', ret.id).then(function (rd) {
+        if (rd.error) throw rd.error;   // delete fail ho to dobara insert nahi (warna lines double)
         return sb.from('material_return_lines').insert(good.map(function (l, i) {
           return { return_id:ret.id, coil_id:l.coil_id, return_weight:num(l.return_weight),
                    remarks:l.remarks, line_no:i };
@@ -2914,7 +3056,8 @@
       if (r.error) throw r.error;
       var inv = r.data;
       return withRollback('service_invoices', inv.id, !doc, function () {
-      return sb.from('service_invoice_lines').delete().eq('invoice_id', inv.id).then(function () {
+      return sb.from('service_invoice_lines').delete().eq('invoice_id', inv.id).then(function (rd) {
+        if (rd.error) throw rd.error;   // delete fail ho to dobara insert nahi (warna lines double)
         return sb.from('service_invoice_lines').insert(good.map(function (l, i) {
           return { invoice_id:inv.id, service_category_id:l.service_category_id || null,
                    description:l.description, calc_method:l.calc_method,
@@ -2924,7 +3067,8 @@
       }).then(function (r2) {
         if (r2.error) throw r2.error;
         return sb.from('service_invoice_jobs').delete().eq('invoice_id', inv.id);
-      }).then(function () {
+      }).then(function (rd) {
+        if (rd.error) throw rd.error;
         if (!invJobs.length) return { error:null };
         return sb.from('service_invoice_jobs').insert(invJobs.map(function (j) {
           return { invoice_id:inv.id, job_id:j };
@@ -3113,8 +3257,32 @@
   });
 
   function loadCoilLedger(coilId, targetId) {
+    /* MASLA: ledger pehle entry ki qism, phir tareekh se chalta tha — saari
+       deliveries saare jobs ke baad. HAL: tareekh, phir document banne ka
+       waqt, phir qism / doc number. */
     sb.from('coil_ledger_v').select('*').eq('coil_id', coilId)
-      .order('sort_order').order('entry_date')
+      .order('entry_date').order('sort_order').order('doc_no')
+      .then(function (r) {
+        if (r.error) return r;
+        var rows = r.data || [], by = {};
+        rows.forEach(function (x) { (by[x.doc_table] = by[x.doc_table] || []).push(x.doc_id); });
+        return Promise.all(Object.keys(by).map(function (t) {
+          var col = t === 'coils' ? 'id,created_at:closed_at' : 'id,created_at';
+          return sb.from(t).select(col).in('id', by[t]).then(function (q) { return q.data || []; }, function () { return []; });
+        })).then(function (lists) {
+          var at = {};
+          lists.forEach(function (l) { l.forEach(function (d) { at[d.id] = d.created_at || ''; }); });
+          rows.sort(function (x, y) {
+            var a = String(x.entry_date || ''), b = String(y.entry_date || '');
+            if (a !== b) return a < b ? -1 : 1;
+            a = at[x.doc_id] || '\uffff'; b = at[y.doc_id] || '\uffff';   // waqt na mile to aakhir mein
+            if (a !== b) return a < b ? -1 : 1;
+            if (x.sort_order !== y.sort_order) return x.sort_order - y.sort_order;
+            return String(x.doc_no || '').localeCompare(String(y.doc_no || ''));
+          });
+          return r;
+        });
+      })
       .then(function (r) {
         var el = $(targetId); if (!el) return;
         if (r.error) { el.innerHTML = '<div class="hint">Ledger load nahi hua.</div>'; return; }
@@ -3457,9 +3625,11 @@
       if (r.error) throw r.error;
       var cv = r.data;
       return withRollback('stock_conversions', cv.id, !doc, function () {
-      return sb.from('stock_conversion_outputs').delete().eq('conversion_id', cv.id).then(function () {
+      return sb.from('stock_conversion_outputs').delete().eq('conversion_id', cv.id).then(function (rd) {
+        if (rd.error) throw rd.error;   // delete fail ho to dobara insert nahi (warna lines double)
         return sb.from('stock_conversion_inputs').delete().eq('conversion_id', cv.id);
-      }).then(function () {
+      }).then(function (rd) {
+        if (rd.error) throw rd.error;
         return sb.from('stock_conversion_inputs').insert(ins.map(function (l, i) {
           return { conversion_id:cv.id, item_id:l.item_id, coil_id:l.coil_id || null,
                    qty:num(l.qty), line_no:i };
@@ -4370,7 +4540,10 @@
     showErr('cErr', '');
     if (!/^https:\/\/.+/.test(url)) { showErr('cErr', 'URL https:// se shuru honi chahiye'); return; }
     if (!key) { showErr('cErr', 'Publishable (anon) key paste karein.'); return; }
-    if (/service_role|^sb_secret/i.test(key)) { showErr('cErr', 'Yeh secret key hai. Publishable (anon) key istemaal karein.'); return; }
+    // purani service_role key JWT hoti hai — lafz andar base64 mein; app-config.isSecretKey payload kholta hai
+    var isSecret = (window.APP_CONFIG && window.APP_CONFIG.isSecretKey) ||
+                   function (k) { return /service_role|^sb_secret/i.test(k); };
+    if (isSecret(key)) { showErr('cErr', 'Yeh secret key hai. Publishable (anon) key istemaal karein.'); return; }
     $('cGo').disabled = true; $('cGo').textContent = 'Connecting\u2026';
     try { sb = makeClient(url, key); } catch (e) {
       $('cGo').disabled = false; $('cGo').textContent = 'Connect';
@@ -4652,7 +4825,8 @@
           (j ? '<div style="font-size:8.5pt;color:#9C9384">' + esc(j.jno) + '</div>' : '') + '</td>' +
         '<td>' + esc(c ? [c.material_type, c.grade].filter(Boolean).join(' / ') : '') + '</td>' +
         '<td class="c">' + esc(c && c.thickness_mm ? c.thickness_mm : '') + '</td>' +
-        '<td class="c">' + esc(out ? sizeText(out) : (c && c.width_mm ? c.width_mm + ' mm' : '')) + '</td>' +
+        // har number ke saath apna unit ("4ft \u00d7 300mm") — receipt ki tarah
+        '<td class="c">' + esc(out ? sizeTight(out) : (c && c.width_mm ? c.width_mm + ' mm' : '')) + '</td>' +
         '<td class="r">' + (out && num(out.pieces) ? kg(out.pieces) : '') + '</td>' +
         '<td class="r">' + kg(l.expected_weight) + '</td>' +
         '<td class="r">' + kg(l.delivered_weight) + '</td></tr>';
@@ -4998,6 +5172,11 @@
     if (!raw) { $('gateConnect').classList.add('on'); return; }
     var cfg; try { cfg = JSON.parse(raw); } catch (e) { cfg = null; }
     if (!cfg || !cfg.url || !cfg.key) { $('gateConnect').classList.add('on'); return; }
+    // Pehle se save hui secret key (purane guard se nikal gayi thi) — us se RLS band chalti. Dobara Connect.
+    if (window.APP_CONFIG && window.APP_CONFIG.isSecretKey && window.APP_CONFIG.isSecretKey(cfg.key)) {
+      $('gateConnect').classList.add('on');
+      showErr('cErr', 'Saved key secret key hai. Publishable (anon) key paste karein.'); return;
+    }
     try { sb = makeClient(cfg.url, cfg.key); } catch (e) { $('gateConnect').classList.add('on'); return; }
     $('gateConnect').classList.remove('on'); afterConnect();
   })();
