@@ -1181,6 +1181,13 @@ as $function$
     ) u;
 $function$;
 
+-- Live par yeh dono pehle se haath se bani hain — un ke result ke columns
+-- alag hain, aur "create or replace" return type nahi badal sakta
+-- (ERROR 42P13). Is liye pehle hata kar naye sire se banate hain. In par
+-- koi view ya function tika nahi; app inhein sirf RPC se bulati hai.
+drop function if exists public.receivable_aging(date);
+drop function if exists public.aging_reconcile(date);
+
 create or replace function public.receivable_aging(p_asof date default current_date)
 returns table(party_id uuid, party_name text, party_kind text, doc_no text, doc_date date,
               due_date date, original numeric, applied numeric, outstanding numeric,
