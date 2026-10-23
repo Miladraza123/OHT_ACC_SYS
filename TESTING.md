@@ -199,3 +199,4 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | Cutting job save par "Could not find the 'width' column" | `db/36_cutting_fixes.sql` reh gaya hai |
 | Aging report khulti nahi (404) | `db/35_accounting_fixes.sql` reh gaya hai |
 | Coil Transfer ka menu nahi / "function does not exist" | `db/37_coil_transfer.sql` reh gaya hai |
+| Transfer ki nayi coil ka serial purani tarah (CUT-yyyy-nnnnnn) | `db/38_coil_transfer_serial.sql` reh gaya hai |

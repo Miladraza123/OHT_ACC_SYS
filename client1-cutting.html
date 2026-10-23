@@ -3170,9 +3170,7 @@
       '<td class="c">' + esc(fc.width_mm || nc.width_mm || '') + '</td>' +
       '<td class="r">' + kg(t.weight) + '</td></tr></tbody>' +
       '<tfoot><tr class="grand"><td colspan="6" class="k">Transfer weight</td><td class="v">' + kg(t.weight) + ' KG</td></tr></tfoot></table>' +
-      '<div class="note">Upar likha bina kata maal ' + esc(fn) + ' ki taraf se ' + esc(tn) + ' ke naam muntaqil kiya gaya. ' +
-      'Maal hamare godown mein hi hai. ' + esc(fn) + ' ke purane kaam / challan / bill par is ka koi asar nahi.' +
-      (t.remarks ? '\n' + esc(t.remarks) : '') + '</div>' +
+      (t.remarks ? '<div class="note">' + esc(t.remarks) + '</div>' : '') +
       '<div class="foot"><div class="sign">' + esc(fn) + '</div><div class="sign">' + esc(tn) + '</div><div class="sign">Godown</div></div>';
     doPrint($('sheet'), fileSafe(t.tno) + '-' + fileSafe(fn) + '-to-' + fileSafe(tn) + '-' + fileDate(t.tdate));
   }
