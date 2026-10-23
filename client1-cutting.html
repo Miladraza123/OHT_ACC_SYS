@@ -427,6 +427,11 @@
   .cbar .fin { background:var(--cash); }
   .cbar .out { background:var(--credit); }
   .cbar .back { background:var(--mute); }
+  .cbar .xfer { background:#3F7F8C; }
+  .pill.xfer { background:#E0EEF0; color:#2F6B78; text-transform:none; letter-spacing:.2px; white-space:normal; line-height:1.35; }
+  .ltab .lt-tin { color:var(--credit); font-weight:600; }
+  .ltab .lt-tout { color:var(--debit); font-weight:600; }
+  .xbtn { padding:3px 10px; font-size:11.5px; margin-top:6px; font-family:'IBM Plex Sans',sans-serif; }
   .cbar .over { background:var(--debit); }
 
   /* size rows (cutting sizes / conversion lines) */
@@ -569,6 +574,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 15l-4-4 4-4"/><path d="M5 11h9a5 5 0 015 5v1"/></svg>
         Material Returns<span class="n" id="nReturns"></span>
       </button>
+      <button class="sb-item" data-t="transfers">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13M13 4l4 4-4 4"/><path d="M20 16H7M11 12l-4 4 4 4"/></svg>
+        Coil Transfer<span class="n" id="nTransfers"></span>
+      </button>
       <button class="sb-item" data-t="ledger">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5v14a1 1 0 001 1h15V4H5a1 1 0 00-1 1z"/><path d="M8 4v16M11 9h6M11 13h6"/></svg>
         Coil Ledger
@@ -683,6 +692,19 @@
     <div class="acts">
       <button class="btn" id="ccNo">Nahi &#8212; coil abhi mojood hai</button>
       <button class="btn pri" id="ccYes" style="flex:none">Haan, khatam</button>
+    </div>
+  </div>
+</div>
+
+<!-- coil transfer cancel — wajah likhna zaroori -->
+<div class="ask" id="xcModal">
+  <div class="box" style="max-width:430px">
+    <h4 id="xcTitle">Transfer cancel karein?</h4>
+    <p id="xcBody"></p>
+    <div class="f"><label>Wajah (zaroori)</label><textarea id="xcReason" placeholder="Transfer kyun cancel ho raha hai?"></textarea></div>
+    <div class="acts">
+      <button class="btn" id="xcNo">Nahi</button>
+      <button class="btn dgr" id="xcYes" style="flex:none">Haan, cancel karein</button>
     </div>
   </div>
 </div>
@@ -832,6 +854,7 @@
       svcCats = [], companies = [], settings = null;
   var inwards = [], coils = [], jobs = [], challans = [], returns = [],
       invoices = [], convs = [], ownCoils = [];
+  var transfers = [], transfersMissing = false;   // coil_transfers (db/37)
 
   /* ---------- helpers ---------- */
   function esc(s) {
@@ -993,6 +1016,7 @@
     ready:       { title:'Ready for Delivery',  view:'cutting_challan_view',   create:null },
     challans:    { title:'Delivery Challans',   view:'cutting_challan_view',   create:'cutting_challan_create',  newLabel:'+ Challan' },
     returns:     { title:'Material Returns',    view:'cutting_return_view',    create:'cutting_return_create',   newLabel:'+ Return' },
+    transfers:   { title:'Coil Transfer',       view:'cutting_transfer_view',  create:'cutting_transfer_create', newLabel:'+ Transfer' },
     ledger:      { title:'Coil Ledger',         view:'cutting_stock_view',     create:null },
     invoices:    { title:'Service Invoices',    view:'service_invoice_view',   create:'service_invoice_create',  newLabel:'+ Invoice' },
     ownstock:    { title:'Own Stock',           view:'reports_view',           create:'masters_edit',            newLabel:'+ Own coil' },
@@ -1069,6 +1093,9 @@
     q.push(can('cutting_stock_view') || can('reports_view')
       ? sb.from('coils').select('*').is('deleted_at', null).eq('ownership', 'own').order('received_date', { ascending:false }).limit(300)
       : Promise.resolve({ data:[] }));
+    q.push(can('cutting_transfer_view') || can('cutting_stock_view')
+      ? sb.from('coil_transfers').select('*').is('deleted_at', null).order('tdate', { ascending:false }).order('created_at', { ascending:false }).limit(300)
+      : Promise.resolve({ data:[] }));
 
     return Promise.all(q).then(function (r) {
       inwards   = r[0].error ? inwards   : (r[0].data || []);
@@ -1079,6 +1106,9 @@
       invoices  = r[5].error ? invoices  : (r[5].data || []);
       convs     = r[6].error ? convs     : (r[6].data || []);
       ownCoils  = r[7].error ? ownCoils  : (r[7].data || []);
+      // db/37 na chali ho to table nahi milti — screen crash nahi karti, saaf paigham deti hai
+      transfersMissing = !!(r[8] && r[8].error);
+      transfers = (r[8] && !r[8].error) ? (r[8].data || []) : transfers;
     });
   }
 
@@ -1102,6 +1132,7 @@
     set('nJobs',     jobs.filter(function (j) { return j.status === 'draft'; }).length);
     set('nChallans', challans.filter(activeDoc).length);
     set('nReturns',  returns.filter(activeDoc).length);
+    set('nTransfers', transfers.filter(activeDoc).length);
     set('nInvoices', invoices.filter(activeDoc).length);
     set('nConv',     convs.filter(activeDoc).length);
     set('nOwn',      ownCoils.filter(function (c) { return c.status === 'active'; }).length);
@@ -1174,7 +1205,7 @@
     if (!canSee(tab)) { el.innerHTML = noPerm(); return; }
     var fn = {
       dash:drawDash, inward:drawInwards, coils:drawCoils, jobs:drawJobs,
-      ready:drawReady, challans:drawChallans, returns:drawReturns, ledger:drawLedger,
+      ready:drawReady, challans:drawChallans, returns:drawReturns, transfers:drawTransfers, ledger:drawLedger,
       invoices:drawInvoices, ownstock:drawOwnStock, conversions:drawConversions,
       reports:drawReports, settings:drawSettings
     }[tab];
@@ -1288,7 +1319,8 @@
       ['raw',  num(c.raw_balance)],
       ['fin',  num(c.pending_delivery)],
       ['out',  num(c.delivered_weight)],
-      ['back', num(c.returned_weight)]
+      ['back', num(c.returned_weight) - num(c.transferred_out_weight)],   // sirf asal wapsi
+      ['xfer', num(c.transferred_out_weight)]                              // doosri party ko transfer
     ];
     var html = parts.map(function (p) {
       var w = p[1] > 0 ? p[1] / rec * 100 : 0;
@@ -1330,6 +1362,7 @@
         '<span class="pill ' + esc(c.status) + '">' + esc(c.status) + '</span>' +
         (low ? '<span class="pill draft">Low</span>' : '') +
         '</div>' +
+        (c.transfer_id ? '<div style="margin-top:4px">' + xferBadge(c) + '</div>' : '') +
         '<div class="nm" style="margin-top:3px">' + esc(nameOf(parties, c.party_id)) + '</div>' +
         '<div class="sub">' +
         [c.material_type, c.grade, mm(c.thickness_mm), mm(c.width_mm)].filter(Boolean).map(esc).join(' \u00b7 ') +
@@ -1337,9 +1370,12 @@
         coilBar(c) +
         '<div class="sub" style="margin-top:5px">Hamare paas <b class="kg">' + kg(phy) + '</b> \u00b7 ' +
         'Bina kata <b class="kg">' + kg(raw) + '</b> \u00b7 Tayyar <b class="kg">' + kg(fin) + '</b>' +
-        (num(c.returned_weight) ? ' \u00b7 Wapas <b class="kg">' + kg(c.returned_weight) + '</b>' : '') +
+        (pureReturn(c) > 0 ? ' \u00b7 Wapas <b class="kg">' + kg(pureReturn(c)) + '</b>' : '') +
+        (num(c.transferred_out_weight) > 0 ? ' \u00b7 Transfer out <b class="kg">' + kg(c.transferred_out_weight) + '</b>' : '') +
         '</div></div>' +
-        '<div class="amt"><span class="kg">' + kg(c.received_weight) + '</span><span class="tag">RECEIVED</span></div>' +
+        '<div class="amt"><span class="kg">' + kg(c.received_weight) + '</span><span class="tag">RECEIVED</span>' +
+        (c.status === 'active' && raw > 0 && can('cutting_transfer_create')
+          ? '<button class="btn xbtn" data-xfer="' + esc(c.id) + '">Transfer</button>' : '') + '</div>' +
         '</div>';
     }).join('') + '</div>'
       : emptyBox('Koi coil nahi', 'Is filter mein koi coil nahi mili.');
@@ -1349,6 +1385,11 @@
       b.addEventListener('click', function () { coilFilter = b.getAttribute('data-f'); render(); });
     });
     wireOpen(el, openCoil);
+    // "Transfer" ka chhota button: row kholne se pehle rok lo, form party/coil bhar kar khule
+    el.querySelectorAll('[data-xfer]').forEach(function (b) {
+      b.addEventListener('click', function (e) { e.stopPropagation(); newTransfer(b.getAttribute('data-xfer')); });
+      b.addEventListener('keydown', function (e) { e.stopPropagation(); });
+    });
   }
   var coilFilter = 'active';
   /* Cancelled document delete nahi hota — record mein rehta hai (audit ke
@@ -1356,7 +1397,7 @@
      is liye har document list par Active / Cancelled / Sab ka filter hai.
      Recycle Bin sirf DELETE kiye hue records ke liye hai, cancelled ke liye
      nahi — dono alag cheezein hain. */
-  var docFilter = { inwards:'active', challans:'active', returns:'active', invoices:'active' };
+  var docFilter = { inwards:'active', challans:'active', returns:'active', invoices:'active', transfers:'active' };
 
   function docSeg(kind) {
     var segs = [['active','Active'],['cancelled','Cancelled'],['all','Sab']];
@@ -1616,7 +1657,7 @@
     $('edBody').innerHTML = html;
     // Print sirf save shuda documents par — naye par chhapne ko kuch hai hi nahi
     $('edPrint').style.display =
-      (doc && (kind === 'challan' || kind === 'invoice' || kind === 'inward' || kind === 'job'))
+      (doc && (kind === 'challan' || kind === 'invoice' || kind === 'inward' || kind === 'job' || kind === 'transfer'))
         ? '' : 'none';
     // Save ki visibility HAR DAFA reset karo. Warna ek dafa koi read-only
     // document (jaise coil ki tafseel) kholne ke baad Save hamesha ke liye
@@ -1848,20 +1889,21 @@
      cancel do qadam mein, doosra fail ho to pehla wapas. */
   function cancelInward() {
     var d = doc;
-    sb.from('coils').select('coil_serial,status,consumed_weight,delivered_weight,returned_weight,closing_adjust_weight')
+    sb.from('coils').select('*')
       .eq('inward_id', d.id).is('deleted_at', null).then(function (rc) {
         if (rc.error) { sayErr(rc.error, 'Cancel'); return; }
         var used = (rc.data || []).map(function (c) {
           var w = [];
           if (num(c.consumed_weight))  w.push('job ' + kg(c.consumed_weight) + ' KG');
           if (num(c.delivered_weight)) w.push('delivery ' + kg(c.delivered_weight) + ' KG');
-          if (num(c.returned_weight))  w.push('wapsi ' + kg(c.returned_weight) + ' KG');
+          if (pureReturn(c) > 0)       w.push('wapsi ' + kg(pureReturn(c)) + ' KG');
+          if (num(c.transferred_out_weight) > 0) w.push('transfer ' + kg(c.transferred_out_weight) + ' KG');
           if (c.status === 'closed')   w.push('coil band');
           return w.length ? c.coil_serial + ' (' + w.join(', ') + ')' : null;
         }).filter(Boolean);
         if (used.length) {
           toast('Inward cancel nahi ho sakta \u2014 in coils par kaam ho chuka hai: ' + used.join('; ') +
-                '. Pehle in ke job / challan / return cancel karein (ya coil dobara kholein), phir inward cancel karein.', true);
+                '. Pehle in ke job / challan / return / transfer cancel karein (ya coil dobara kholein), phir inward cancel karein.', true);
           return;
         }
         confirmBox('Inward cancel karein?', 'Is inward ki coils bhi cancel ho jayengi.', 'Cancel karein')
@@ -2818,6 +2860,323 @@
       });
   }
 
+  /* ---------- Coil Transfer (malikiyat tabdeeli) ----------
+     Ahmed ka bina kata (raw) maal Bilal ke naam karna — poora ya hissa.
+     Sirf RPC se: create_coil_transfer / cancel_coil_transfer. coils ya
+     coil_transfers mein seedha kuch nahi likhte; Ahmed ke purane job /
+     challan / invoice ko haath nahi lagta. Kata hua maal is mein nahi —
+     wo Delivery Challan se jata hai. Offline queue nahi: transfer sirf
+     internet par hota hai. */
+  function pureReturn(c) {            // returned_weight mein transfer bhi shamil hai — usay alag karo
+    return Math.max(0, round2(num(c.returned_weight) - num(c.transferred_out_weight)));
+  }
+  function xferOf(c) { return c && c.transfer_id ? byId(transfers, c.transfer_id) : null; }
+  function xferBadge(c) {
+    if (!c || !c.transfer_id) return '';
+    var t = xferOf(c);
+    return '<span class="pill xfer">Transfer in \u2190 ' +
+      esc(t ? nameOf(parties, t.from_party_id) : 'party') + (t ? ' (' + esc(t.tno) + ')' : '') + '</span>';
+  }
+  function xferErr(e, what) {
+    var m = (e && e.message) || '';
+    if (e && (e.code === 'PGRST202' || e.code === '42883' || e.code === '42P01' || e.code === 'PGRST205' ||
+        /Could not find the (function|table)|schema cache|(function|relation|table) .* does not exist/i.test(m))) {
+      toast('Coil Transfer ki setup database mein abhi nahi hui (db/37 chalana baqi hai) \u2014 admin se raabta karein', true);
+      return;
+    }
+    sayErr(e, what);
+  }
+  function reloadSoon() {                  // chalte hue sync ke baad hi taza load, taake purana data wapas na aaye
+    if (loading) { setTimeout(reloadSoon, 400); return; }
+    loadAll();
+  }
+  function r3(n) { return Math.round((Number(n) || 0) * 1000) / 1000; }
+  function coilSerialOf(id) {
+    var c = byId(coils, id); return c ? c.coil_serial : '';
+  }
+
+  function drawTransfers(el) {
+    if (transfersMissing) {
+      el.innerHTML = emptyBox('Coil Transfer abhi tayyar nahi', 'Database mein Coil Transfer ki setup (db/37) abhi nahi hui. Admin se raabta karein.');
+      return;
+    }
+    var rows = transfers.filter(function (t) {
+      return docPass('transfers', t) &&
+        hitsQuery((t.tno || '') + ' ' + nameOf(parties, t.from_party_id) + ' ' + nameOf(parties, t.to_party_id) + ' ' +
+                  coilSerialOf(t.from_coil_id) + ' ' + coilSerialOf(t.to_coil_id) + ' ' + (t.reference || ''));
+    });
+    if (!rows.length) {
+      el.innerHTML = docSeg('transfers') + emptyBox('Koi transfer nahi', 'Party ka bina kata maal doosri party ke naam karna ho to Naya Transfer banayein.');
+      wireDocSeg(el, 'transfers');
+      return;
+    }
+    el.innerHTML = docSeg('transfers') + '<div class="rows">' + rows.map(function (t) {
+      return '<div class="brow" data-open="' + esc(t.id) + '" tabindex="0">' +
+        '<div class="no">' + esc(t.tno || '\u2014') + '</div>' +
+        '<div class="docav doc-sale"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8h13M13 4l4 4-4 4"/><path d="M20 16H7M11 12l-4 4 4 4"/></svg></div>' +
+        '<div class="mid"><div class="nm">' + esc(nameOf(parties, t.from_party_id)) + ' \u2192 ' + esc(nameOf(parties, t.to_party_id)) + '</div>' +
+        '<div class="sub">' + fmtDate(t.tdate) + ' \u00b7 ' +
+        esc(coilSerialOf(t.from_coil_id) || '\u2014') + ' \u2192 ' + esc(coilSerialOf(t.to_coil_id) || '\u2014') +
+        (t.status === 'cancelled' ? ' \u00b7 <span class="pill cancelled">Cancelled</span>' : '') + '</div></div>' +
+        '<div class="amt"><span class="kg">' + kg(t.weight) + '</span><span class="tag">TRANSFER</span></div></div>';
+    }).join('') + '</div>';
+    wireDocSeg(el, 'transfers');
+    wireOpen(el, openTransfer);
+  }
+
+  /* --- naya transfer --- */
+  function transferableCoils() {
+    return coils.filter(function (c) { return c.status === 'active' && num(c.raw_balance) > 0; });
+  }
+  function newTransfer(coilId) {
+    if (!can('cutting_transfer_create')) { toast('Aapko Coil Transfer banane ki ijazat nahi hai', true); return; }
+    if (transfersMissing) { xferErr({ code:'PGRST202' }, 'Transfer'); return; }
+    doc = null;
+    var c = coilId ? byId(coils, coilId) : null;
+    if (coilId && (!c || c.status !== 'active' || !(num(c.raw_balance) > 0))) {
+      toast('Is coil mein bina kata maal nahi bacha \u2014 transfer nahi ho sakta', true); return;
+    }
+    openEd('Naya Coil Transfer', 'transfer', transferForm(c), saveTransfer);
+    wireTransfer(c);
+  }
+  function transferForm(c) {
+    var withStock = {};
+    transferableCoils().forEach(function (x) { withStock[x.party_id] = true; });
+    var plist = parties.filter(function (p) { return withStock[p.id]; });
+    return '<div class="card"><div class="ttl">Coil Transfer \u2014 malikiyat tabdeeli</div>' +
+      '<div class="hint" style="margin:-4px 0 12px">Sirf bina kata (raw) maal. Kata hua maal Delivery Challan se jata hai. ' +
+      'Pehli party ke purane job / challan / invoice jaise hain waise hi rehte hain.</div>' +
+      '<div class="f"><label>Date</label><input id="xDate" type="date" value="' + esc(todayPKT()) + '"></div>' +
+      '<div class="f"><label>Maal kis party ka hai (se)</label><select id="xFrom">' +
+        opts(plist, c ? c.party_id : '', '\u2014 Party chunein \u2014') + '</select></div>' +
+      '<div class="f"><label>Coil</label><select id="xCoil"></select>' +
+        '<div class="hint" id="xCoilInfo"></div></div>' +
+      '<div class="f"><label>Maal kis party ko dena hai (ko)</label><select id="xTo"></select></div>' +
+      '<div class="f num"><label>Transfer weight (KG)</label>' +
+        '<input id="xW" type="number" step="0.001" inputmode="decimal" min="0">' +
+        '<div class="hint" id="xWInfo"></div></div>' +
+      '<div class="f"><label>Reference / saboot</label>' +
+        '<input id="xRef" type="text" placeholder="Chitthi, WhatsApp, dastakhat wagera"></div>' +
+      '<div class="f"><label>Remarks</label><textarea id="xRem"></textarea></div>' +
+      '</div>' +
+      '<div class="card"><div class="ttl">Nateeja</div><div id="xPrev" class="vbox" style="margin-top:0"></div></div>';
+  }
+  function wireTransfer(c0) {
+    var firstTo = true;
+    function curCoil() { return byId(coils, val('xCoil')); }
+    function fillCoils(selId) {
+      var pid = val('xFrom');
+      var list = transferableCoils().filter(function (c) { return c.party_id === pid; });
+      $('xCoil').innerHTML = '<option value="">' + (pid ? '\u2014 Coil chunein \u2014' : '\u2014 Pehle party chunein \u2014') + '</option>' +
+        list.map(function (c) {
+          return '<option value="' + esc(c.id) + '"' + (c.id === selId ? ' selected' : '') + '>' + esc(coilLabel(c)) + '</option>';
+        }).join('');
+    }
+    function fillTo() {
+      var from = val('xFrom'), keep = $('xTo').value;
+      $('xTo').innerHTML = opts(parties.filter(function (p) { return p.id !== from; }), keep, '\u2014 Party chunein \u2014');
+    }
+    function upd() {
+      var c = curCoil(), w = r3(num(val('xW'))), raw = c ? r3(c.raw_balance) : 0;
+      var to = byId(parties, val('xTo')), from = byId(parties, val('xFrom'));
+      $('xCoilInfo').innerHTML = c
+        ? 'Bina kata <b class="kg">' + kg(c.raw_balance) + ' KG</b> \u00b7 Hamare paas <b class="kg">' + kg(c.physical_balance) + ' KG</b>' +
+          (num(c.raw_balance) !== num(c.physical_balance) ? ' (kuch kata hua maal bhi bana hua hai \u2014 wo transfer nahi hoga)' : '')
+        : '';
+      var msg = '', bad = false;
+      if (c && w > raw + 0.0004) { bad = true; msg = '<span class="neg">Coil mein sirf ' + kg(raw) + ' KG bina kata maal hai \u2014 ' + kg(w) + ' KG transfer nahi ho sakta.</span>'; }
+      else if (c && $('xW').value !== '' && !(w > 0)) { bad = true; msg = '<span class="neg">Weight 0 se zyada hona chahiye.</span>'; }
+      else if (c) msg = 'Zyada se zyada ' + kg(raw) + ' KG.';
+      $('xWInfo').innerHTML = msg;
+      var h = '';
+      if (c && from && to && w > 0 && !bad) {
+        h = '<div class="r"><span>' + esc(from.name) + ' \u2192 ' + esc(to.name) + '</span><span class="v kg">' + kg(w) + ' KG</span></div>' +
+            '<div class="r"><span>' + esc(c.coil_serial) + ' mein baqi (' + esc(from.name) + ')</span><span class="v kg">' + kg(Math.max(0, r3(raw - w))) + ' KG</span></div>' +
+            '<div class="r tot"><span>' + esc(to.name) + ' ke naam nayi coil</span><span class="v kg">' + kg(w) + ' KG</span></div>' +
+            '<div class="hint">Nayi coil ka serial save hone par milega.</div>';
+      } else h = '<div class="hint">Coil, party aur weight daalein.</div>';
+      $('xPrev').innerHTML = h;
+    }
+    fillCoils(c0 ? c0.id : '');
+    fillTo();
+    if (c0) $('xW').value = String(c0.raw_balance);
+    upd();
+    $('xFrom').addEventListener('change', function () { fillCoils(''); fillTo(); $('xW').value = ''; markDirty(); upd(); });
+    $('xCoil').addEventListener('change', function () {
+      var c = curCoil(); $('xW').value = c ? String(c.raw_balance) : '';   // pehle poora coil, chaho to kam kar lo
+      markDirty(); upd();
+    });
+    ['xTo','xW','xRef','xRem','xDate'].forEach(function (id) {
+      $(id).addEventListener('input', function () { markDirty(); upd(); });
+      $(id).addEventListener('change', function () { markDirty(); upd(); });
+    });
+  }
+  function saveTransfer() {
+    var cid = val('xCoil'), toId = val('xTo'), w = r3(num(val('xW'))), c = byId(coils, cid);
+    if (!cid || !c) { toast('Pehle party aur coil chunein', true); return false; }
+    if (!toId) { toast('Jis party ko maal dena hai wo chunein', true); return false; }
+    if (toId === c.party_id) { toast('Dono party aik hi hain \u2014 apni hi coil apne naam kya transfer karni', true); return false; }
+    if (!(w > 0)) { toast('Transfer weight 0 se zyada daalein', true); return false; }
+    if (!navigator.onLine) { toast('Internet nahi hai \u2014 Coil Transfer offline save nahi hota, internet aane par dobara karein', true); return false; }
+    var fromName = nameOf(parties, c.party_id), toName = nameOf(parties, toId);
+    // Taaza balance DB se: screen purani ho sakti hai
+    return sb.from('coils').select('id,coil_serial,party_id,status,raw_balance').eq('id', cid).maybeSingle().then(function (r) {
+      if (r.error) { xferErr(r.error, 'Transfer'); return false; }
+      var fc = r.data;
+      if (!fc || fc.status !== 'active') { toast('Yeh coil ab active nahi hai \u2014 transfer nahi ho sakta', true); return false; }
+      var raw = num(fc.raw_balance);
+      if (w > raw + 0.0004) {
+        toast('Coil mein sirf ' + kg(raw) + ' KG bina kata maal hai \u2014 ' + kg(w) + ' KG transfer nahi ho sakta', true); return false;
+      }
+      return confirmBox('Transfer karein?',
+        fromName + ' \u2192 ' + toName + ' \u00b7 ' + kg(w) + ' KG \u00b7 ' + fc.coil_serial + ' \u2192 ' + toName + ' ke naam nayi coil. ' +
+        fromName + ' ke purane job / challan / invoice par koi asar nahi.', 'Transfer karein').then(function (ok) {
+        if (!ok) return false;
+        return sb.rpc('create_coil_transfer', {
+          p_from_coil:cid, p_to_party:toId, p_weight:w, p_date:val('xDate') || todayPKT(),
+          p_reference:val('xRef'), p_remarks:val('xRem')
+        }).then(function (rr) {
+          if (rr.error) { xferErr(rr.error, 'Transfer'); return false; }
+          var d = Array.isArray(rr.data) ? rr.data[0] : rr.data;
+          if (!d || !d.id) { toast('Transfer ka jawab samajh nahi aaya \u2014 Coil Transfer list dekh lein', true); reloadSoon(); return false; }
+          toast('Transfer ho gaya \u2014 ' + d.tno + ' \u00b7 nayi coil ' + d.to_coil_serial);
+          // editor band nahi karte: nayi coil ka serial aur Print slip yahin dikhte hain
+          return sb.from('coil_transfers').select('*').eq('id', d.id).maybeSingle().then(function (q) {
+            var row = (q && !q.error && q.data) ? q.data : null;
+            if (row) transfers = [row].concat(transfers.filter(function (x) { return x.id !== row.id; }));
+            reloadSoon();
+            if (row) showTransfer(row);
+            else closeEd();
+            return false;
+          });
+        });
+      });
+    });
+  }
+
+  /* --- save shuda transfer --- */
+  var xferCoils = {};
+  function openTransfer(id) {
+    var t = byId(transfers, id);
+    if (t) { showTransfer(t); return; }
+    sb.from('coil_transfers').select('*').eq('id', id).maybeSingle().then(function (r) {
+      if (r.error || !r.data) { toast('Transfer nahi mila', true); return; }
+      showTransfer(r.data);
+    });
+  }
+  function showTransfer(t) {
+    sb.from('coils').select('*').in('id', [t.from_coil_id, t.to_coil_id]).then(function (r) {
+      xferCoils = {};
+      (r.data || []).forEach(function (c) { xferCoils[c.id] = c; });
+      doc = t;
+      var fc = xferCoils[t.from_coil_id] || byId(coils, t.from_coil_id) || {};
+      var nc = xferCoils[t.to_coil_id] || byId(coils, t.to_coil_id) || {};
+      var can_ = t.status !== 'cancelled' && can('cutting_transfer_cancel');
+      var html = '<div class="card"><div class="ttl">' + esc(t.tno) + ' <span class="pill ' + esc(t.status === 'cancelled' ? 'cancelled' : 'completed') + '">' +
+        esc(t.status) + '</span></div><div class="vbox" style="margin-top:0">' +
+        '<div class="r"><span>Date</span><span class="v">' + fmtDate(t.tdate) + '</span></div>' +
+        '<div class="r"><span>Se (maal dene wali)</span><span class="v">' + esc(nameOf(parties, t.from_party_id)) + '</span></div>' +
+        '<div class="r"><span>Ko (maal lene wali)</span><span class="v">' + esc(nameOf(parties, t.to_party_id)) + '</span></div>' +
+        '<div class="r"><span>Purani coil</span><span class="v">' + esc(fc.coil_serial || '\u2014') + '</span></div>' +
+        '<div class="r"><span>Nayi coil</span><span class="v" id="xvNew">' + esc(nc.coil_serial || '\u2014') + '</span></div>' +
+        '<div class="r tot"><span>Transfer weight</span><span class="v kg">' + kg(t.weight) + ' KG</span></div></div>' +
+        (t.reference ? '<div class="f" style="margin-top:10px"><label>Reference / saboot</label><input value="' + esc(t.reference) + '" disabled></div>' : '') +
+        (t.remarks ? '<div class="f"><label>Remarks</label><textarea disabled>' + esc(t.remarks) + '</textarea></div>' : '') +
+        (t.status === 'cancelled'
+          ? '<div class="f" style="margin-top:10px"><div class="hint neg">Cancel ho chuka' +
+            (t.cancelled_at ? ' (' + fmtDate(t.cancelled_at) + ')' : '') + (t.cancel_reason ? ' \u2014 ' + esc(t.cancel_reason) : '') + '</div></div>'
+          : '') +
+        '</div>' +
+        (nc.id ? '<div class="card"><div class="ttl">Nayi coil abhi</div><div class="vbox" style="margin-top:0">' +
+          '<div class="r"><span>Received</span><span class="v kg">' + kg(nc.received_weight) + '</span></div>' +
+          '<div class="r"><span>Bina kata</span><span class="v kg">' + kg(nc.raw_balance) + '</span></div>' +
+          '<div class="r"><span>Status</span><span class="v">' + esc(nc.status || '') + '</span></div></div></div>' : '') +
+        (fc.id ? '<div class="card"><div class="ttl">Purani coil abhi</div><div class="vbox" style="margin-top:0">' +
+          '<div class="r"><span>Bina kata (baqi)</span><span class="v kg">' + kg(fc.raw_balance) + '</span></div>' +
+          '<div class="r"><span>Hamare paas</span><span class="v kg">' + kg(fc.physical_balance) + '</span></div></div></div>' : '');
+      openEd(t.tno || 'Transfer', 'transfer', html, null, can_ ? cancelTransfer : null);
+      $('edSave').style.display = 'none';
+      if (t.status === 'cancelled') $('edPrint').style.display = 'none';
+    });
+  }
+  function usedSummary(c) {
+    var w = [];
+    if (num(c.consumed_weight))     w.push('job mein ' + kg(c.consumed_weight) + ' KG');
+    if (num(c.finished_weight))     w.push('bana hua maal ' + kg(c.finished_weight) + ' KG');
+    if (num(c.delivered_weight))    w.push('delivery ' + kg(c.delivered_weight) + ' KG');
+    if (num(c.returned_weight))     w.push('wapsi / aage transfer ' + kg(c.returned_weight) + ' KG');
+    if (num(c.closing_adjust_weight)) w.push('closing adjustment ' + kg(c.closing_adjust_weight) + ' KG');
+    if (c.status && c.status !== 'active') w.push('coil ' + c.status);
+    return w;
+  }
+  var xcTransfer = null;
+  function cancelTransfer() {
+    var t = doc; if (!t || t.status === 'cancelled') return;
+    if (!navigator.onLine) { toast('Internet nahi hai \u2014 Transfer cancel nahi hua', true); return; }
+    // nayi coil par kaam ho chuka ho to cancel nahi — pehle taaza haal DB se
+    sb.from('coils').select('*').eq('id', t.to_coil_id).maybeSingle().then(function (r) {
+      if (r.error) { xferErr(r.error, 'Cancel'); return; }
+      var nc = r.data, used = nc ? usedSummary(nc) : [];
+      if (used.length) {
+        toast('Transfer cancel nahi ho sakta \u2014 nayi coil ' + nc.coil_serial + ' par kaam ho chuka hai: ' + used.join(', ') +
+              '. Pehle wo job / challan / return cancel karein.', true);
+        return;
+      }
+      xcTransfer = t;
+      $('xcBody').textContent = t.tno + ' \u00b7 ' + nameOf(parties, t.from_party_id) + ' \u2192 ' + nameOf(parties, t.to_party_id) +
+        ' \u00b7 ' + kg(t.weight) + ' KG. Nayi coil cancel ho jayegi aur maal wapas ' + nameOf(parties, t.from_party_id) + ' ki coil mein aa jayega.';
+      $('xcReason').value = '';
+      $('xcModal').classList.add('on');
+    });
+  }
+  $('xcNo').addEventListener('click', function () { $('xcModal').classList.remove('on'); xcTransfer = null; });
+  $('xcYes').addEventListener('click', function () {
+    var t = xcTransfer, reason = $('xcReason').value.trim();
+    if (!t) return;
+    if (!reason) { toast('Cancel ki wajah likhna zaroori hai', true); return; }
+    if (!navigator.onLine) { toast('Internet nahi hai \u2014 Transfer cancel nahi hua', true); return; }
+    $('xcYes').disabled = true;
+    sb.rpc('cancel_coil_transfer', { p_id:t.id, p_reason:reason }).then(function (r) {
+      $('xcYes').disabled = false;
+      if (r.error) { xferErr(r.error, 'Cancel'); return; }
+      $('xcModal').classList.remove('on'); xcTransfer = null;
+      toast('Transfer cancel ho gaya');
+      closeEd(); reloadSoon();
+    }).catch(function (e) { $('xcYes').disabled = false; xferErr(e, 'Cancel'); });
+  });
+
+  /* --- A4 slip: dono party, coil, weight, reference, teen dastakhat --- */
+  function printTransfer() {
+    var t = doc; if (!t) return;
+    var fp = byId(parties, t.from_party_id), tp = byId(parties, t.to_party_id);
+    var fc = xferCoils[t.from_coil_id] || byId(coils, t.from_coil_id) || {};
+    var nc = xferCoils[t.to_coil_id] || byId(coils, t.to_coil_id) || {};
+    var fn = fp ? fp.name : 'Party 1', tn = tp ? tp.name : 'Party 2';
+    $('sheet').innerHTML =
+      firmHead(defFirm(), 'Coil Transfer \u00b7 Malikiyat Tabdeeli', t.tno, t.tdate) +
+      '<div class="who"><div><div class="lb">Maal dene wali party (From)</div><div class="nm">' + esc(fn) + '</div></div>' +
+      '<div style="font-size:18pt;align-self:center">\u2192</div>' +
+      '<div><div class="lb">Maal lene wali party (To)</div><div class="nm">' + esc(tn) + '</div></div>' +
+      metaBlock([['Reference', t.reference], ['Warehouse', nameOf(warehouses, fc.warehouse_id, '')]]) + '</div>' +
+      '<table><thead><tr><th>Purani coil</th><th>Nayi coil</th><th style="width:22mm">Material</th>' +
+      '<th style="width:18mm">Grade</th><th class="c" style="width:16mm">Thk mm</th><th class="c" style="width:16mm">Width mm</th>' +
+      '<th class="r" style="width:26mm">Weight KG</th></tr></thead><tbody>' +
+      '<tr><td>' + esc(fc.coil_serial || '') +
+        (fc.party_coil_ref ? '<div style="font-size:8.5pt;color:#9C9384">Ref ' + esc(fc.party_coil_ref) + '</div>' : '') + '</td>' +
+      '<td>' + esc(nc.coil_serial || '') + '</td>' +
+      '<td>' + esc(fc.material_type || nc.material_type || '') + '</td>' +
+      '<td>' + esc(fc.grade || nc.grade || '') + '</td>' +
+      '<td class="c">' + esc(fc.thickness_mm || nc.thickness_mm || '') + '</td>' +
+      '<td class="c">' + esc(fc.width_mm || nc.width_mm || '') + '</td>' +
+      '<td class="r">' + kg(t.weight) + '</td></tr></tbody>' +
+      '<tfoot><tr class="grand"><td colspan="6" class="k">Transfer weight</td><td class="v">' + kg(t.weight) + ' KG</td></tr></tfoot></table>' +
+      '<div class="note">Upar likha bina kata maal ' + esc(fn) + ' ki taraf se ' + esc(tn) + ' ke naam muntaqil kiya gaya. ' +
+      'Maal hamare godown mein hi hai. ' + esc(fn) + ' ke purane kaam / challan / bill par is ka koi asar nahi.' +
+      (t.remarks ? '\n' + esc(t.remarks) : '') + '</div>' +
+      '<div class="foot"><div class="sign">' + esc(fn) + '</div><div class="sign">' + esc(tn) + '</div><div class="sign">Godown</div></div>';
+    doPrint($('sheet'), fileSafe(t.tno) + '-' + fileSafe(fn) + '-to-' + fileSafe(tn) + '-' + fileDate(t.tdate));
+  }
+
   /* ---------- Service Invoice ---------- */
   var invLines = [], invJobs = [];
   var CALC = [['kg','Per KG'],['ton','Per Ton'],['piece','Per Piece'],['meter','Per Meter'],
@@ -3160,7 +3519,8 @@
       '<div class="vbox" style="margin-top:0">' +
       '<div class="r"><span>Received</span><span class="v kg">' + kg(c.received_weight) + '</span></div>' +
       '<div class="r"><span>Delivery ho gayi</span><span class="v kg">\u2212' + kg(c.delivered_weight) + '</span></div>' +
-      (num(c.returned_weight) ? '<div class="r"><span>Raw wapas</span><span class="v kg">\u2212' + kg(c.returned_weight) + '</span></div>' : '') +
+      (pureReturn(c) > 0 ? '<div class="r"><span>Raw wapas</span><span class="v kg">\u2212' + kg(pureReturn(c)) + '</span></div>' : '') +
+      (num(c.transferred_out_weight) > 0 ? '<div class="r"><span>Transfer out (doosri party ko)</span><span class="v kg">\u2212' + kg(c.transferred_out_weight) + '</span></div>' : '') +
       (num(c.closing_adjust_weight) ? '<div class="r"><span>Closing adjustment</span><span class="v kg">\u2212' + kg(c.closing_adjust_weight) + '</span></div>' : '') +
       '<div class="r tot"><span>Abhi hamare paas</span><span class="v kg' + (low ? ' warn' : '') + '">' + kg(phy) + ' KG</span></div>' +
       '<div class="hint">Yeh weight slip ke actual weight se ghatta hai \u2014 job ke weight se nahi.</div>' +
@@ -3190,6 +3550,14 @@
         : '') +
       '</div>' +
 
+      (c.transfer_id ? '<div class="card"><div class="ttl">Transfer se aayi</div><div class="f" style="margin:0">' +
+        xferBadge(c) + '<div class="hint">Yeh coil kisi doosri party se Coil Transfer ke zariye aayi hai.</div></div></div>' : '') +
+
+      (c.ownership === 'party' && c.status === 'active' && num(c.raw_balance) > 0 && can('cutting_transfer_create')
+        ? '<div class="card"><div class="ttl">Malikiyat tabdeeli</div>' +
+          '<button class="btn" id="coilXfer" style="width:100%">Bina kata maal doosri party ko transfer karein</button></div>'
+        : '') +
+
       (can('cutting_coil_close')
         ? '<div class="card"><div class="ttl">Coil</div>' +
           (c.status === 'active'
@@ -3206,6 +3574,7 @@
     $('edSave').style.display = 'none';
 
     if ($('coilClose')) $('coilClose').addEventListener('click', function () { askCloseCoil(c); });
+    if ($('coilXfer')) $('coilXfer').addEventListener('click', function () { newTransfer(c.id); });
     if ($('coilReopen')) $('coilReopen').addEventListener('click', function () {
       confirmBox('Coil dobara kholein?', 'Closing adjustment ulta ho jayega aur balance wapas aa jayega.', 'Kholein')
         .then(function (ok) {
@@ -3289,13 +3658,15 @@
         var rows = r.data || [];
         if (!rows.length) { el.innerHTML = '<div class="hint">Abhi koi entry nahi.</div>'; return; }
         var LBL = { inward:'Maal aaya', job_input:'Job mein gaya', job_output:'Maal bana',
-                    delivery:'Delivery', 'return':'Raw wapas', closing_adjustment:'Closing adjustment' };
+                    delivery:'Delivery', 'return':'Raw wapas', closing_adjustment:'Closing adjustment',
+                    transfer_in:'Transfer se aaya', transfer_out:'Transfer ho gaya' };
         var run = 0;
         el.innerHTML = '<table class="ltab"><thead><tr><th>Tareekh</th><th>Kya hua</th>' +
           '<th>Doc</th><th style="text-align:right">In</th><th style="text-align:right">Out</th></tr></thead><tbody>' +
           rows.map(function (x) {
             return '<tr><td>' + fmtDate(x.entry_date) + '</td>' +
-              '<td>' + esc(LBL[x.entry_type] || x.entry_type) +
+              '<td>' + (x.entry_type === 'transfer_in' ? '<span class="lt-tin">' : x.entry_type === 'transfer_out' ? '<span class="lt-tout">' : '<span>') +
+                esc(LBL[x.entry_type] || x.entry_type) + '</span>' +
               (x.remarks ? '<div class="sub" style="font-size:11px;color:var(--mute)">' + esc(x.remarks) + '</div>' : '') + '</td>' +
               '<td class="doc">' + esc(x.doc_no || '\u2014') + '</td>' +
               '<td class="r">' + (num(x.in_kg) ? kg(x.in_kg) : '') + '</td>' +
@@ -3698,7 +4069,8 @@
       '<div class="r"><span>Process hua</span><span class="v kg">' + kg(s('consumed_weight')) + '</span></div>' +
       '<div class="r"><span>Delivery ke liye tayyar</span><span class="v kg">' + kg(s('pending_delivery')) + '</span></div>' +
       '<div class="r"><span>Delivery ho gayi</span><span class="v kg">' + kg(s('delivered_weight')) + '</span></div>' +
-      '<div class="r"><span>Raw wapas</span><span class="v kg">' + kg(s('returned_weight')) + '</span></div>' +
+      '<div class="r"><span>Raw wapas</span><span class="v kg">' + kg(s('returned_weight') - s('transferred_out_weight')) + '</span></div>' +
+      (s('transferred_out_weight') > 0 ? '<div class="r"><span>Transfer out (doosri party ko)</span><span class="v kg">' + kg(s('transferred_out_weight')) + '</span></div>' : '') +
       '<div class="r"><span>Variance / adjustment</span><span class="v kg">' + kg(s('closing_adjust_weight')) + '</span></div>' +
       '<div class="r tot"><span>Hamare paas physical maal</span><span class="v kg">' +
         kg(s('physical_balance')) + ' KG</span></div>' +
@@ -4447,6 +4819,7 @@
           '<div class="f"><label>Delivery Challan</label><input id="stDC" value="' + esc(s.challan_prefix || 'DC') + '"></div>' +
           '<div class="f"><label>Material Return</label><input id="stMR" value="' + esc(s.return_prefix || 'MR') + '"></div>' +
         '</div><div class="f"><label>Stock Conversion</label><input id="stCV" value="' + esc(s.conversion_prefix || 'CV') + '"></div>' +
+        ('transfer_prefix' in s ? '<div class="f"><label>Coil Transfer</label><input id="stCT" value="' + esc(s.transfer_prefix || 'CT') + '"></div>' : '') +
         '<div class="hint">Prefix badalne se purane documents nahi badalte \u2014 sirf naye is prefix se banenge.</div>' +
       '</div>' +
       '<button class="btn pri" id="stSave" style="width:100%">Save settings</button>' +
@@ -4507,7 +4880,7 @@
     adder('addOp',  'newOp',  'operators');
 
     $('stSave').addEventListener('click', function () {
-      sb.from('cutting_settings').update({
+      var upd = {
         coil_finish_threshold_kg:nval('stThr'),
         delivery_variance_pct:nval('stVar'),
         delivery_variance_min_kg:nval('stVarKg'),
@@ -4516,7 +4889,9 @@
         job_prefix:val('stCJ') || 'CJ', service_invoice_prefix:val('stSV') || 'SV',
         challan_prefix:val('stDC') || 'DC', return_prefix:val('stMR') || 'MR',
         conversion_prefix:val('stCV') || 'CV'
-      }).eq('id', 1).then(function (r) {
+      };
+      if ($('stCT')) upd.transfer_prefix = val('stCT') || 'CT';   // column db/37 ke baad hi hota hai
+      sb.from('cutting_settings').update(upd).eq('id', 1).then(function (r) {
         if (r.error) { sayErr(r.error, 'Save'); return; }
         toast('Settings save ho gayin'); loadAll();
       });
@@ -4525,7 +4900,7 @@
 
   /* ---------- + New button ---------- */
   $('newBtn').addEventListener('click', function () {
-    ({ inward:newInward, jobs:newJob, challans:newChallan, returns:newReturn,
+    ({ inward:newInward, jobs:newJob, challans:newChallan, returns:newReturn, transfers:function () { newTransfer(); },
        invoices:newInvoice, conversions:newConversion, ownstock:newOwnCoil }[tab] || function () {})();
   });
 
@@ -4633,7 +5008,7 @@
       rtChannel = sb.channel(APP.key('cutting-changes'));
       ['coils','cutting_jobs','cutting_job_inputs','cutting_job_outputs','material_inwards',
        'delivery_challans','delivery_challan_lines','material_returns','service_invoices',
-       'stock_conversions'].forEach(function (t) {
+       'stock_conversions','coil_transfers'].forEach(function (t) {
         rtChannel = rtChannel.on('postgres_changes', { event:'*', schema:'public', table:t }, scheduleRefresh);
       });
       rtChannel.subscribe();
@@ -5164,6 +5539,7 @@
     if (edKind === 'challan') printChallan();
     else if (edKind === 'invoice') printInvoice();
     else if (edKind === 'inward') printInward();
+    else if (edKind === 'transfer') printTransfer();
     else if (edKind === 'job') $('printPick').classList.add('on');
   });
 

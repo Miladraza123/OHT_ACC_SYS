@@ -91,6 +91,16 @@ Sirf tab jab client cutting ka kaam karta ho.
 | 3.23 | Har cutting-size line | Pcs AUR Weight dono sath (jaise `20 Pcs · 2,000 Kg`) |
 | 3.24 | Bahut lamba naam/number kisi coil/party mein daal kar dekhein | Kata ya chhupa nahi — agli line par chala jata hai |
 | 3.25 | Receipt ke neeche | Sirf Total Pcs, Total Weight, Signature |
+| 3.26 | Party Coil Stock → Ahmed ki coil par **Transfer** dabayein, Bilal chunein, wazan aadha daalein | Form bharti hui aati hai; Save par **CT-0001** banta hai |
+| 3.27 | Ahmed ki coil dekhein | Bina kata maal utna kam; ledger mein "Transfer out → Bilal" |
+| 3.28 | Bilal ki coil dekhein | Nayi coil, utna hi wazan, "Transfer in ← Ahmed (CT-0001)" |
+| 3.29 | Balance se zyada wazan daal kar Save | System rok deta hai, wajah likhi aati hai |
+| 3.30 | Ahmed ko hi transfer karne ki koshish | System rok deta hai |
+| 3.31 | Transfer ka **Print slip** | Dono naam, coil, wazan, saboot, teen sign ki jagah |
+| 3.32 | Bilal ki nayi coil par cutting job aur challan | Aam tareeqe se ban jata hai; Ahmed ke purane job/challan/invoice bilkul waise |
+| 3.33 | Bilal ne coil use kar li ho phir Transfer **Cancel** karein | System rok deta hai (kaam ho chuka) |
+| 3.34 | Bilal ne kuch use na kiya ho to Transfer **Cancel** | Ho jata hai, Ahmed ka bina kata maal wapas |
+| 3.35 | Sirf `cutting_transfer_view` wala user | List dekhta hai, Naya/Cancel ke button nahi |
 
 ---
 
@@ -188,3 +198,4 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | Cutting size mein Width/Length ke alag unit nazar nahi aate | `db/33_cutting_size_units.sql` reh gaya hai |
 | Cutting job save par "Could not find the 'width' column" | `db/36_cutting_fixes.sql` reh gaya hai |
 | Aging report khulti nahi (404) | `db/35_accounting_fixes.sql` reh gaya hai |
+| Coil Transfer ka menu nahi / "function does not exist" | `db/37_coil_transfer.sql` reh gaya hai |

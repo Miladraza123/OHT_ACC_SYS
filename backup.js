@@ -241,6 +241,10 @@ async function buildExcel(data) {
   const CJ = (data.cutting_jobs || []).filter(active).sort(function (a, b) { return (a.jdate || '') < (b.jdate || '') ? -1 : 1; });
   const DC = (data.delivery_challans || []).filter(active).sort(function (a, b) { return (a.ddate || '') < (b.ddate || '') ? -1 : 1; });
   const MR = (data.material_returns || []).filter(active).sort(function (a, b) { return (a.rdate || '') < (b.rdate || '') ? -1 : 1; });
+  const CT = (data.coil_transfers || []).filter(notDeleted)
+               .sort(function (a, b) { return (a.tdate || '') < (b.tdate || '') ? -1 : 1; });
+  // Transfer ki dono coils (cancelled wali bhi) — coilSerial sirf active coils ka hai
+  const ctSerial = {}; (data.coils || []).forEach(function (c) { ctSerial[c.id] = c.coil_serial; });
   const whName = {}; (data.warehouses || []).forEach(function (w) { whName[w.id] = w.name; });
   const coilSerial = {}; CO.forEach(function (c) { coilSerial[c.id] = c.coil_serial; });
 
@@ -570,6 +574,17 @@ async function buildExcel(data) {
                'Remarks': r.remarks };
     })).sort(function (a, b) { return (a.Date || '') < (b.Date || '') ? -1 : 1; }));
 
+  // Coil Transfer — Ahmed ki bina kati coil Bilal ko (cancelled bhi, status ke saath)
+  addPlain('Coil Transfers',
+    ['CT no', 'Date', 'From party', 'To party', 'Old coil', 'New coil', 'Weight KG', 'Status', 'Reference', 'Remarks'],
+    CT.map(function (t) {
+      return { 'CT no': t.tno, 'Date': t.tdate,
+               'From party': partyName[t.from_party_id] || '', 'To party': partyName[t.to_party_id] || '',
+               'Old coil': ctSerial[t.from_coil_id] || '', 'New coil': ctSerial[t.to_coil_id] || '',
+               'Weight KG': Number(t.weight) || 0, 'Status': t.status,
+               'Reference': t.reference, 'Remarks': t.remarks };
+    }));
+
   return wb.xlsx.writeBuffer();
 }
 
@@ -620,6 +635,8 @@ const RESTORE_ORDER = [
   'stock_transfers', 'stock_transfer_lines', 'stock_adjustments',
   'sheets',
   'material_inwards', 'coils',
+  // Coil Transfer (malikiyat tabdeeli) coils ke BAAD — dono coil ids coils mein hain (purani DB mein table nahi hoti to missed mein aati hai)
+  'coil_transfers',
   'cutting_jobs', 'cutting_job_inputs', 'cutting_job_outputs',
   'delivery_challans', 'delivery_challan_lines',
   'material_returns', 'material_return_lines',

@@ -127,10 +127,11 @@ SQL Editor mein is tarteeb se:
 | 34 | `34_security_fixes.sql` | Merge RPCs par taala, band user ko kuch nahi dikhta, Setup sirf admin — **lazmi** |
 | 35 | `35_accounting_fixes.sql` | Trial Balance mein returns, period lock dono tareekhein, totals server par, costing, Aging — **lazmi** |
 | 36 | `36_cutting_fixes.sql` | `width` column, delivery ki hadd, cutting state guards, invoice totals server par — **lazmi** |
+| 37 | `37_coil_transfer.sql` | Coil Transfer: Ahmed ki coil Bilal ko bechi gayi to malikiyat badalna (poora ya kuch hissa) |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 
-### Pehle se chalta hua system (live) — sirf 34, 35, 36
+### Pehle se chalta hua system (live) — sirf 34, 35, 36 (aur 37 agar Coil Transfer chahiye)
 
 Jis database par 01–33 pehle chal chuki hain, wahan sirf nayi teen files
 **34 → 35 → 36** isi tarteeb se chalayein. Teeno do baar chalana mehfooz
@@ -145,6 +146,9 @@ hai. Pehle backup le lein.
 - **36** `cutting_job_outputs.width_mm` ko `width` kar deti hai — sirf
   agar `width` pehle se na ho. Purana over-delivery data nahi badalta;
   file ke aakhir mein usay dhoondne ki queries hain.
+- **37** (Coil Transfer) alag aur ikhtiyari hai: nayi table `coil_transfers`, 3 permissions
+  (`cutting_transfer_view/create/cancel`) aur 2 RPC. Purana data nahi badalta. Chalane ke baad Masters → Users
+  mein jis staff ko transfer karna ho use `cutting_transfer_create` dein.
 - Naye usool: cancel ab `*_cancel` permission maangta hai; delivered/
   invoiced job aur invoiced challan band ho jate hain; Setup sirf admin;
   band (inactive) user ko kuch nahi dikhta. Backup ke liye
