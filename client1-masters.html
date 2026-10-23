@@ -761,6 +761,9 @@
           <label><input type="checkbox" class="perm" data-grp="cutmat" data-key="cutting_return_view"> Material Return dekhein</label>
           <label><input type="checkbox" class="perm" data-grp="cutmat" data-key="cutting_return_create"> Material Return banayein</label>
           <label><input type="checkbox" class="perm" data-grp="cutmat" data-key="cutting_return_cancel"> Material Return cancel karein</label>
+          <label><input type="checkbox" class="perm" data-grp="cutmat" data-key="cutting_transfer_view"> Coil Transfer dekhein</label>
+          <label><input type="checkbox" class="perm" data-grp="cutmat" data-key="cutting_transfer_create"> Coil Transfer banayein</label>
+          <label><input type="checkbox" class="perm" data-grp="cutmat" data-key="cutting_transfer_cancel"> Coil Transfer cancel karein</label>
         </div>
         <div class="permgrp">
           <label class="permhead"><input type="checkbox" class="permAll" data-grp="cutjob"> <b>Cutting &mdash; Jobs &amp; Delivery</b></label>
@@ -1408,7 +1411,7 @@
       var USED = { service_invoices:'Service Invoices', vouchers:'bills',
                    voucher_lines:'bills', quotations:'quotations',
                    purchase_orders:'purchase orders', sales_returns:'sales returns',
-                   coils:'coils', cutting_jobs:'cutting jobs',
+                   coils:'coils', coil_transfers:'coil transfers', cutting_jobs:'cutting jobs',
                    material_inwards:'material inwards', delivery_challans:'delivery challans',
                    material_returns:'material returns', stock_transfers:'stock transfers',
                    stock_adjustments:'stock adjustments', sheets:'ledger entries',
@@ -4061,11 +4064,12 @@
       sb.from('service_invoices').select('id', { count:'exact', head:true }),
       sb.from('material_inwards').select('id', { count:'exact', head:true }),
       sb.from('material_returns').select('id', { count:'exact', head:true }),
-      sb.from('stock_conversions').select('id', { count:'exact', head:true })
+      sb.from('stock_conversions').select('id', { count:'exact', head:true }),
+      sb.from('coil_transfers').select('id', { count:'exact', head:true })
     ]).then(function (r) {
       var c = r.map(function (x) { return x.count || 0; });
       /* tarteeb: 7 coils, 8 jobs, 9 challans, 10 service invoices,
-                  11 inwards, 12 material returns, 13 conversions */
+                  11 inwards, 12 material returns, 13 conversions, 14 coil transfers */
       var cut = [];
       if (c[11]) cut.push(c[11] + ' inwards');
       if (c[7])  cut.push(c[7] + ' coils');
@@ -4074,6 +4078,7 @@
       if (c[12]) cut.push(c[12] + ' material returns');
       if (c[10]) cut.push(c[10] + ' service invoices');
       if (c[13]) cut.push(c[13] + ' conversions');
+      if (c[14]) cut.push(c[14] + ' coil transfers');
       $('wipeCounts').innerHTML =
         c[0] + ' bills, ' + c[1] + ' ledger din, ' + c[2] + ' quotations, ' + c[3] + ' POs, ' + c[4] + ' returns' +
         (cut.length ? '<br>' + cut.join(', ') : '') +
@@ -4473,6 +4478,7 @@
       return Promise.reject(new Error('Yeh backup poori ijazat ke baghair bana tha (adhoora). ' +
         'Is se "Poora replace" nahi ho sakta \u2014 sirf "ghaayab records" wala tareeqa chunein.'));
     }
+    var oldFile = (j.order || []).indexOf('coil_transfers') === -1;
     return Promise.all(j.order.map(function (t) {
       var rows = j.tables[t] || [];
       if (RS_SKIP[t]) {
@@ -4496,7 +4502,17 @@
                  // file mein ek bhi row nahi magar database mein hain — shayad padhi hi na gayi
                  emptyWipe:mode === 'replace' && !rows.length && del > 0 };
       });
-    }));
+    })).then(function (plan) {
+      /* Purani file (Coil Transfer se pehle ki) mein coil_transfers hai hi nahi.
+         Us table ko haath nahi lagta — magar database mein transfers hon to unki
+         coils Replace mein urh nahi sakengi (foreign key), is liye batao. */
+      if (!oldFile || mode !== 'replace') return plan;
+      return selectAll('coil_transfers', 'id').then(function (r) {
+        var n = r.error ? 0 : (r.data || []).length;
+        if (n) plan.push({ table:'coil_transfers', add:0, upd:0, del:0, total:0, skip:'nofile', have:n });
+        return plan;
+      });
+    });
   }
 
   function drawRestorePlan(plan) {
@@ -4504,7 +4520,14 @@
     var missedT = plan.filter(function (p) { return p.skip === 'missed' || p.missed; });
     var emptyT  = plan.filter(function (p) { return p.emptyWipe; });
     var recT    = plan.filter(function (p) { return p.skip === 'record' && p.total; });
+    var oldT    = plan.filter(function (p) { return p.skip === 'nofile'; });
     var warn = '';
+    if (oldT.length) {
+      warn += '<div class="f bad"><div class="hint"><b>\u26a0 Yeh file Coil Transfer se pehle ki hai.</b> ' +
+        'Database mein ' + oldT[0].have + ' coil transfer(s) hain; file mein nahi, is liye inhein na urhaya ' +
+        'jata hai na badla jata hai. Un se bani coils (aur unki party/coil) \u201Cpoora replace\u201D mein ' +
+        'nahi urh sakengi \u2014 wo \u201Cmasla\u201D mein aayengi.</div></div>';
+    }
     if (missedT.length) {
       warn += '<div class="f bad"><div class="hint"><b>\u26a0 Backup file adhoori hai.</b> Yeh tables ' +
         'backup ke waqt poori nahi aayi thin: <b>' + missedT.map(function (p) { return esc(p.table); }).join(', ') +
@@ -4658,6 +4681,7 @@
     'stock_transfers', 'stock_transfer_lines', 'stock_adjustments',
     'sheets',
     'material_inwards', 'coils',
+    'coil_transfers',
     'cutting_jobs', 'cutting_job_inputs', 'cutting_job_outputs',
     'delivery_challans', 'delivery_challan_lines',
     'material_returns', 'material_return_lines',
@@ -4786,7 +4810,8 @@
       ['mr_seq',   maxDocNo(T.material_returns,  'rno')],
       ['sv_seq',   maxDocNo(T.service_invoices,  'sino')],
       ['cv_seq',   maxDocNo(T.stock_conversions, 'cno')],
-      ['coil_seq', maxDocNo(T.coils,             'coil_serial')]
+      ['coil_seq', maxDocNo(T.coils,             'coil_serial')],
+      ['ct_seq',   maxDocNo(T.coil_transfers,    'tno')]
     ];
     var lines = map.filter(function (x) { return x[1] > 0; })
                    .map(function (x) { return "select setval('" + x[0] + "', " + x[1] + ", true);"; });
@@ -5530,6 +5555,7 @@
                    'cutting_inward_view','cutting_inward_create','cutting_inward_edit','cutting_inward_cancel',
                    'cutting_stock_view','cutting_coil_adjust','cutting_coil_close',
                    'cutting_return_view','cutting_return_create','cutting_return_cancel',
+                   'cutting_transfer_view','cutting_transfer_create','cutting_transfer_cancel',
                    /* Cutting / Processing — jobs aur delivery */
                    'cutting_job_view','cutting_job_create','cutting_job_edit','cutting_job_complete','cutting_job_cancel',
                    'cutting_challan_view','cutting_challan_create','cutting_challan_edit','cutting_challan_cancel',
