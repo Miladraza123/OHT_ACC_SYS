@@ -60,6 +60,15 @@
 --    F9  Numbering: transfer_prefix naya column (default 'CT') cutting_settings
 --        mein; tno = CT-0001. Number RPC pehle hi le leta hai taake nayi coil
 --        ke remarks mein likha ja sake.
+--    F11 Views ki security_invoker: `create or replace view` usay mita deta hai
+--        (bina ijazat wala user bhi data parh leta). Teeno views par dobara
+--        `alter view ... set (security_invoker = on)` lagayi gayi hai.
+--    F10 LIVE shakal: party_coil_stock_v mein live par aik extra column
+--        physical_balance hai (status se pehle; repo ke 17 mein nahi). Naya
+--        view usi tarteeb mein banta hai jo us DB par hai (DO block, view ke
+--        HISSA mein); naye install mein yeh column aakhir mein jud jata hai.
+--        Live par wipe_test_data ka text repo se sirf comments / spacing mein
+--        alag nikla — kaam wahi hai, is liye usay badalna mehfooz hai.
 --
 --  Ijazatein (admin ko sab implicit): cutting_transfer_view,
 --  cutting_transfer_create, cutting_transfer_cancel. SELECT: admin ya
@@ -863,6 +872,35 @@ create or replace view coil_ledger_v as
     left join parties tp on tp.id = t.to_party_id
    where c.deleted_at is null and t.deleted_at is null and t.status = 'active';
 
+/* party_coil_stock_v — live par is view mein aik EXTRA column hai: physical_balance,
+   status se pehle (repo ke db/17 mein yeh column nahi). `create or replace view`
+   maujooda columns ki tarteeb nahi badalne deta, is liye view ko usi shakal mein
+   dobara banate hain jo us DB par hai:
+     * physical_balance view mein pehle se hai aur status se pehle  → wahin rahe
+     * pehle se hai magar aakhir mein (37 dobara chali)             → aakhir mein
+     * hai hi nahi (naya install)                                   → aakhir mein jod do
+   Naye 4 columns hamesha baaqi columns ke baad (physical_balance aakhir mein ho to
+   us se pehle) — tarteeb har dobara chalane par wahi rehti hai. */
+do $do$
+declare
+  pos_phys int;
+  pos_stat int;
+  v_mid    text := '';
+  v_end    text := '';
+begin
+  select max(ordinal_position) filter (where column_name = 'physical_balance'),
+         max(ordinal_position) filter (where column_name = 'status')
+    into pos_phys, pos_stat
+    from information_schema.columns
+   where table_schema = 'public' and table_name = 'party_coil_stock_v';
+
+  if pos_phys is not null and pos_stat is not null and pos_phys < pos_stat then
+    v_mid := 'c.physical_balance,';      -- live ki shakal: variance_weight, physical_balance, status
+  else
+    v_end := ', c.physical_balance';     -- naya install / dobara chalna: aakhir mein
+  end if;
+
+  execute format($q$
 create or replace view party_coil_stock_v as
 select c.id                  as coil_id,
        c.coil_serial,
@@ -884,6 +922,7 @@ select c.id                  as coil_id,
        c.delivered_weight,
        c.returned_weight,
        c.closing_adjust_weight as variance_weight,
+       %s
        c.status,
        c.closed_at,
        c.closing_reason,
@@ -892,7 +931,7 @@ select c.id                  as coil_id,
        c.transferred_out_weight,
        c.transfer_id,
        t.tno                 as transfer_no,
-       fp.name               as transfer_from_party
+       fp.name               as transfer_from_party%s
   from coils c
   join parties p    on p.id = c.party_id
   join warehouses w on w.id = c.warehouse_id
@@ -900,7 +939,9 @@ select c.id                  as coil_id,
   left join parties fp       on fp.id = t.from_party_id
  where c.deleted_at is null
    and c.ownership = 'party'
-   and c.status <> 'cancelled';
+   and c.status <> 'cancelled'
+$q$, v_mid, v_end);
+end $do$;
 
 create or replace view party_material_ledger_v as
 select c.party_id,
@@ -920,6 +961,14 @@ select c.party_id,
   join parties p on p.id = c.party_id
  where c.deleted_at is null and c.ownership = 'party' and c.status <> 'cancelled'
  group by c.party_id, p.name;
+
+/* MUHIM: `create or replace view` view ki options (security_invoker) mita deta hai.
+   db/18 ne in teeno views ko security_invoker = on kiya tha, taake view un tables ki
+   RLS (har user ki ijazat) ke tehat chale. Wapas na lagayein to bina ijazat wala user
+   bhi in views se poora coil / party ka data parh leta hai. Isliye har dafa dobara. */
+alter view public.coil_ledger_v           set (security_invoker = on);
+alter view public.party_coil_stock_v      set (security_invoker = on);
+alter view public.party_material_ledger_v set (security_invoker = on);
 
 
 -- ============================================================
