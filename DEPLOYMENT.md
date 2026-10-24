@@ -128,6 +128,7 @@ SQL Editor mein is tarteeb se:
 | 35 | `35_accounting_fixes.sql` | Trial Balance mein returns, period lock dono tareekhein, totals server par, costing, Aging — **lazmi** |
 | 36 | `36_cutting_fixes.sql` | `width` column, delivery ki hadd, cutting state guards, invoice totals server par — **lazmi** |
 | 37 | `37_coil_transfer.sql` | Coil Transfer: Ahmed ki coil Bilal ko bechi gayi to malikiyat badalna (poora ya kuch hissa) |
+| 38 | `38_coil_transfer_serial.sql` | Coil Transfer ki nayi coil ka serial `<asli serial>-T1`, `-T2` (serial badalta nahi, peechhe jaata hai) |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 
