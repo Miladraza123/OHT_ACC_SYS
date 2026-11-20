@@ -637,7 +637,7 @@ const RESTORE_ORDER = [
   'material_inwards', 'coils',
   // Coil Transfer (malikiyat tabdeeli) coils ke BAAD — dono coil ids coils mein hain (purani DB mein table nahi hoti to missed mein aati hai)
   'coil_transfers',
-  'cutting_jobs', 'cutting_job_inputs', 'cutting_job_outputs',
+  'cutting_jobs', 'cutting_sub_orders', 'cutting_job_inputs', 'cutting_job_outputs',
   'delivery_challans', 'delivery_challan_lines',
   'material_returns', 'material_return_lines',
   'service_invoices', 'service_invoice_lines',

@@ -1411,7 +1411,7 @@
       var USED = { service_invoices:'Service Invoices', vouchers:'bills',
                    voucher_lines:'bills', quotations:'quotations',
                    purchase_orders:'purchase orders', sales_returns:'sales returns',
-                   coils:'coils', coil_transfers:'coil transfers', cutting_jobs:'cutting jobs',
+                   coils:'coils', coil_transfers:'coil transfers', cutting_jobs:'cutting jobs', cutting_sub_orders:'cutting sub orders',
                    material_inwards:'material inwards', delivery_challans:'delivery challans',
                    material_returns:'material returns', stock_transfers:'stock transfers',
                    stock_adjustments:'stock adjustments', sheets:'ledger entries',
@@ -4682,7 +4682,7 @@
     'sheets',
     'material_inwards', 'coils',
     'coil_transfers',
-    'cutting_jobs', 'cutting_job_inputs', 'cutting_job_outputs',
+    'cutting_jobs', 'cutting_sub_orders', 'cutting_job_inputs', 'cutting_job_outputs',
     'delivery_challans', 'delivery_challan_lines',
     'material_returns', 'material_return_lines',
     'service_invoices', 'service_invoice_lines',
@@ -4748,7 +4748,21 @@
 
   /* Ek table ka data 200 ki qist mein. Ek qist fail ho jaye to us table ko
      wahin chhor dete hain — baqi tables phir bhi chalti rahengi. */
+  /* Database ke khud-ginne wale (generated) columns — backup file mein hote hain
+     magar INSERT mein daale nahi ja sakte ("cannot insert a non-DEFAULT value").
+     Unke baghair coils aur delivery lines ka Restore fail ho jata tha. */
+  var RS_GENERATED = {
+    coils:['raw_balance', 'pending_delivery', 'physical_balance'],
+    delivery_challan_lines:['variance_kg']
+  };
   function putRows(t, rows, mode, res) {
+    var gen = RS_GENERATED[t];
+    if (gen) {
+      rows = rows.map(function (r) {
+        var c = {}; Object.keys(r).forEach(function (k) { if (gen.indexOf(k) < 0) c[k] = r[k]; });
+        return c;
+      });
+    }
     var parts = [];
     for (var i = 0; i < rows.length; i += 200) parts.push(rows.slice(i, i + 200));
     var p = Promise.resolve(), bad = null;
