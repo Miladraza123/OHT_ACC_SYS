@@ -101,6 +101,14 @@ Sirf tab jab client cutting ka kaam karta ho.
 | 3.33 | Bilal ne coil use kar li ho phir Transfer **Cancel** karein | System rok deta hai (kaam ho chuka) |
 | 3.34 | Bilal ne kuch use na kiya ho to Transfer **Cancel** | Ho jata hai, Ahmed ka bina kata maal wapas |
 | 3.35 | Sirf `cutting_transfer_view` wala user | List dekhta hai, Naya/Cancel ke button nahi |
+| 3.36 | Cutting Job mein **+ Sub Order** dabayein, har sub order ka naam, input coil aur sizes | Har sub order ka alag card; save par SO-1, SO-2 bante hain |
+| 3.37 | Ek hi coil do sub orders ke input mein (alag alag KG) | Ho jata hai; coil ka consumed dono ka jama |
+| 3.38 | Sub order ki size ke "Kis coil se" mein | Sirf usi sub order ke input wali coils |
+| 3.39 | Delivery Challan → Ready material | Har size ke saath uska `SO-n` (jab job mein 1 se zyada sub order hon); ek challan mein kai sub orders ka maal bhi ja sakta hai |
+| 3.40 | Challan ban jane ke baad wo job kholein | Jis sub order ka maal gaya wo lock (grey, naam bhi); baaqi sub orders badal sakte hain, naya sub order bhi jod sakte hain |
+| 3.41 | Service Invoice → + Unbilled sub orders | Ek ya kai sub orders chunein (ek job ke ya alag jobs ke); ek sub order ek hi invoice par |
+| 3.42 | Cutting Job **Print** → 80mm / 54mm / A4 | Har sub order ki apni patti aur apna total; aakhir mein poore job ka total |
+| 3.43 | Purane jobs | Bilkul waise; har job ko SO-1 mil gaya |
 
 ---
 
@@ -200,3 +208,4 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | Aging report khulti nahi (404) | `db/35_accounting_fixes.sql` reh gaya hai |
 | Coil Transfer ka menu nahi / "function does not exist" | `db/37_coil_transfer.sql` reh gaya hai |
 | Transfer ki nayi coil ka serial purani tarah (CUT-yyyy-nnnnnn) | `db/38_coil_transfer_serial.sql` reh gaya hai |
+| Cutting Job mein "+ Sub Order" nahi / Invoice mein sirf poore job | `db/39_job_sub_orders.sql` reh gaya hai |

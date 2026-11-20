@@ -309,6 +309,11 @@
     .receipt .rc-tot .v { flex:1; font-family:'IBM Plex Mono',monospace; font-weight:700;
       text-align:right; word-break:break-word; min-width:0; }
     .receipt .rc-sign .ln { border-bottom:0.3mm solid #000; }
+    .receipt .rc-so { border-top:0.5mm solid #000; border-bottom:0.5mm solid #000; text-transform:uppercase;
+      letter-spacing:.6px; }
+    .receipt .rc-sub { display:flex; border-top:0.3mm dashed #000; }
+    .receipt .rc-sub .k { flex:none; }
+    .receipt .rc-sub .v { flex:1; font-family:'IBM Plex Mono',monospace; font-weight:700; text-align:right; min-width:0; }
 
     /* ---------- 80mm ---------- */
     body.rcpt80 .receipt { width:72mm; padding:3mm 0 5mm; font-size:9pt; line-height:1.35; }
@@ -325,6 +330,9 @@
     body.rcpt80 .receipt .rc-tot { margin-top:3.5mm; padding-top:2mm; }
     body.rcpt80 .receipt .rc-tot div { gap:3mm; padding:.7mm 0; }
     body.rcpt80 .receipt .rc-tot .k { width:26mm; font-size:9pt; }
+    body.rcpt80 .receipt .rc-so { margin-top:3.5mm; padding:1.2mm 0; font-size:9pt; }
+    body.rcpt80 .receipt .rc-sub { margin-top:1.5mm; padding-top:1mm; gap:3mm; font-size:8.5pt; }
+    body.rcpt80 .receipt .rc-sub .k { width:26mm; }
     body.rcpt80 .receipt .rc-sign { margin-top:9mm; font-size:9pt; }
     body.rcpt80 .receipt .rc-sign .ln { height:7mm; margin-top:1mm; }
 
@@ -340,6 +348,9 @@
     body.rcpt54 .receipt .rc-coil .cs { font-size:7.2pt; margin-top:.5mm; }
     body.rcpt54 .receipt .rc-row { column-gap:1.5mm; row-gap:.4mm; padding:1mm 0; }
     body.rcpt54 .receipt .rc-none { font-size:6.8pt; padding:1mm 0; }
+    body.rcpt54 .receipt .rc-so { margin-top:2.4mm; padding:.9mm 0; font-size:7.4pt; }
+    body.rcpt54 .receipt .rc-sub { margin-top:1mm; padding-top:.7mm; gap:1.5mm; font-size:7pt; flex-wrap:wrap; }
+    body.rcpt54 .receipt .rc-sub .k { width:auto; }
     body.rcpt54 .receipt .rc-tot { margin-top:2.4mm; padding-top:1.4mm; }
     body.rcpt54 .receipt .rc-tot div { gap:1.5mm; padding:.5mm 0; }
     body.rcpt54 .receipt .rc-tot .k { width:18mm; font-size:7.2pt; }
@@ -1093,6 +1104,9 @@
     q.push(can('cutting_stock_view') || can('reports_view')
       ? sb.from('coils').select('*').is('deleted_at', null).eq('ownership', 'own').order('received_date', { ascending:false }).limit(300)
       : Promise.resolve({ data:[] }));
+    q.push(hasSubOrders && (jobs_ || can('cutting_challan_view') || can('service_invoice_view'))
+      ? sb.from('cutting_sub_orders').select('*').order('created_at', { ascending:false }).limit(3000)
+      : Promise.resolve({ data:[] }));
     q.push(can('cutting_transfer_view') || can('cutting_stock_view')
       ? sb.from('coil_transfers').select('*').is('deleted_at', null).order('tdate', { ascending:false }).order('created_at', { ascending:false }).limit(300)
       : Promise.resolve({ data:[] }));
@@ -1107,8 +1121,9 @@
       convs     = r[6].error ? convs     : (r[6].data || []);
       ownCoils  = r[7].error ? ownCoils  : (r[7].data || []);
       // db/37 na chali ho to table nahi milti — screen crash nahi karti, saaf paigham deti hai
-      transfersMissing = !!(r[8] && r[8].error);
-      transfers = (r[8] && !r[8].error) ? (r[8].data || []) : transfers;
+      subOrders = r[8].error ? subOrders : (r[8].data || []);
+      transfersMissing = !!(r[9] && r[9].error);
+      transfers = (r[9] && !r[9].error) ? (r[9].data || []) : transfers;
     });
   }
 
@@ -1116,7 +1131,7 @@
     if (!sb || loading) return Promise.resolve();
     loading = true;
     syncNote('Sync\u2026');
-    return probeSizeUnits().then(loadMasters).then(loadDocs).then(function () {
+    return probeSizeUnits().then(probeSubOrders).then(loadMasters).then(loadDocs).then(function () {
       loading = false; syncNote('');
       counts(); render();
     }).catch(function (e) {
@@ -1440,7 +1455,8 @@
         '<div class="mid"><div class="nm">' + esc(nameOf(parties, j.party_id)) + '</div>' +
         '<div class="sub">' + fmtDate(j.jdate) +
         (j.machine_id ? ' \u00b7 ' + esc(nameOf(machines, j.machine_id)) : '') +
-        (j.operator_id ? ' \u00b7 ' + esc(nameOf(operators, j.operator_id)) : '') + '</div></div>' +
+        (j.operator_id ? ' \u00b7 ' + esc(nameOf(operators, j.operator_id)) : '') +
+        (subsOfJob(j.id).length > 1 ? ' \u00b7 ' + subsOfJob(j.id).length + ' sub orders' : '') + '</div></div>' +
         '<div class="amt"><span class="pill ' + esc(j.status) + '">' + esc(j.status) + '</span></div></div>';
     }).join('') + '</div>'
       : emptyBox('Koi job nahi', 'Coil ka maal kaatne ke liye Cutting Job banayein.');
@@ -1946,8 +1962,42 @@
   function wUnit(o) { return (o && (o.width_unit  || o.size_unit)) || 'mm'; }
   function lUnit(o) { return (o && (o.length_unit || o.size_unit)) || 'mm'; }
 
+  /* ---------- Sub Orders (db/39) ----------
+     Ek job ke andar kai Sub Order. Har sub order ka apna input (coil + KG)
+     aur apni cutting sizes; delivery aur bill bhi sub order ke hisaab se
+     (ya kai sub orders ek saath ek challan / invoice par).
+
+     db/39 abhi na chali ho (hasSubOrders = false) to ek hi "chhupa" sub
+     order hota hai — screen bilkul purani jaisi, kuch nahi tootta.
+
+     Line ka sub order: jobSubs[i]._k, aur har input / size line par sub_k. */
+  var subOrders = [], hasSubOrders = false;
+  var jobSubs = [];       // [{ _k, id, sub_no, name, locked }]
+
+  function probeSubOrders() {
+    if (!sb) return Promise.resolve();
+    return sb.from('cutting_sub_orders').select('id,job_id').limit(1)
+      .then(function (r) { hasSubOrders = !r.error; },
+            function () { hasSubOrders = false; });
+  }
+  function subsOfJob(jid) {
+    return subOrders.filter(function (s) { return s.job_id === jid; })
+      .sort(function (a, b) { return a.sub_no - b.sub_no; });
+  }
+  function subTag(s) { return s ? 'SO-' + s.sub_no : ''; }
+  /* "SO-2 · Bilal ka Order B" — sirf tab dikhao jab job mein 1 se zyada
+     sub order hon (warna purani screens jaisi saaf rahein). */
+  function soSuffix(jobId, subId) {
+    if (!hasSubOrders || !subId) return '';
+    var list = subsOfJob(jobId);
+    if (list.length < 2) return '';
+    var s = byId(subOrders, subId);
+    return s ? ' · ' + subTag(s) + (s.name ? ' ' + s.name : '') : '';
+  }
+
   function newJob() {
-    doc = null; jobInputs = []; jobOutputs = []; jobOrig = { ins:{}, outs:{} };
+    doc = null; jobInputs = []; jobOutputs = []; jobOrig = { ins:{}, outs:{}, subs:{} };
+    jobSubs = [{ _k:++lineSeq, id:null, sub_no:1, name:'', locked:'' }];
     openEd('New Cutting Job', 'job', jobForm({ jdate:todayPKT(), warehouse_id:defWarehouse() }), saveJob);
     wireJob(false);
   }
@@ -1957,26 +2007,64 @@
     Promise.all([
       sb.from('cutting_job_inputs').select('*').eq('job_id', id).order('line_no'),
       sb.from('cutting_job_outputs').select('*').eq('job_id', id).order('line_no'),
-      // Job ka maal challan par gaya ya invoice ban gaya? To job lock.
+      // Job ka maal challan par gaya ya invoice ban gaya? To wo sub order lock.
       sb.from('delivery_challan_lines').select('output_id,delivery_challans(dno,status,deleted_at)').eq('job_id', id),
-      sb.from('service_invoice_jobs').select('invoice_id,service_invoices(sino,status,deleted_at)').eq('job_id', id)
+      hasSubOrders
+        ? sb.from('service_invoice_jobs').select('invoice_id,sub_order_id,service_invoices(sino,status,deleted_at)').eq('job_id', id)
+        : sb.from('service_invoice_jobs').select('invoice_id,service_invoices(sino,status,deleted_at)').eq('job_id', id),
+      hasSubOrders
+        ? sb.from('cutting_sub_orders').select('*').eq('job_id', id).order('sub_no')
+        : Promise.resolve({ data:[] })
     ]).then(function (r) {
       if (r[0].error || r[1].error) { sayErr(r[0].error || r[1].error, 'Load'); return; }
-      var lockBy = [];
+      if (r[4] && r[4].error) { sayErr(r[4].error, 'Load'); return; }
+      var outSub = {};
+      (r[1].data || []).forEach(function (x) { outSub[x.id] = x.sub_order_id || ''; });
+
+      /* Kis sub order ka maal kin documents mein gaya. Purani DB (sub order
+         nahi) mein poora job ek hi sub order hai. */
+      var lockBy = {}, lockAll = [];
+      function lockAdd(subId, no) {
+        var key = subId || '_';
+        lockBy[key] = lockBy[key] || [];
+        if (lockBy[key].indexOf(no) < 0) lockBy[key].push(no);
+        if (lockAll.indexOf(no) < 0) lockAll.push(no);
+      }
       (r[2].data || []).forEach(function (x) {
         var d = x.delivery_challans;
-        if (d && d.status !== 'cancelled' && !d.deleted_at && lockBy.indexOf(d.dno) < 0) lockBy.push(d.dno);
+        if (d && d.status !== 'cancelled' && !d.deleted_at) lockAdd(hasSubOrders ? outSub[x.output_id] : '', d.dno);
       });
       (r[3].data || []).forEach(function (x) {
         var s = x.service_invoices;   // invoice nazar na aaye (ijazat) to bhi billed hi samjho
-        if (!s || (s.status !== 'cancelled' && !s.deleted_at)) lockBy.push(s ? s.sino : 'Service invoice');
+        if (!s || (s.status !== 'cancelled' && !s.deleted_at)) lockAdd(hasSubOrders ? x.sub_order_id : '', s ? s.sino : 'Service invoice');
       });
-      jobInputs  = (r[0].data || []).map(function (x) { return { _k:++lineSeq, id:x.id, coil_id:x.coil_id, input_weight:x.input_weight }; });
-      jobOrig = { ins:{}, outs:{} };
+
+      if (hasSubOrders) {
+        jobSubs = (r[4].data || []).map(function (s) {
+          return { _k:++lineSeq, id:s.id, sub_no:s.sub_no, name:s.name || '',
+                   locked:(lockBy[s.id] || lockBy['_'] || []).join(', ') };
+        });
+      } else {
+        jobSubs = [];
+      }
+      if (!jobSubs.length) {
+        jobSubs = [{ _k:++lineSeq, id:null, sub_no:1, name:'', locked:hasSubOrders ? '' : lockAll.join(', ') }];
+      }
+      var subKey = {};
+      jobSubs.forEach(function (s) { if (s.id) subKey[s.id] = s._k; });
+      var firstK = jobSubs[0]._k;
+
+      jobInputs  = (r[0].data || []).map(function (x) {
+        return { _k:++lineSeq, id:x.id, coil_id:x.coil_id, input_weight:x.input_weight,
+                 sub_k:subKey[x.sub_order_id] || firstK };
+      });
+      jobOrig = { ins:{}, outs:{}, subs:{} };
       (r[0].data || []).forEach(function (x) { jobOrig.ins[x.id] = x; });
       (r[1].data || []).forEach(function (x) { jobOrig.outs[x.id] = x; });
+      jobSubs.forEach(function (s) { if (s.id) jobOrig.subs[s.id] = { id:s.id, name:s.name }; });
       jobOutputs = (r[1].data || []).map(function (x) {
         return { _k:++lineSeq, id:x.id, coil_id:x.coil_id,
+                 sub_k:subKey[x.sub_order_id] || firstK,
                  size_unit:x.size_unit || 'mm',
                  width_unit:x.width_unit || x.size_unit || 'mm',
                  length_unit:x.length_unit || x.size_unit || 'mm',
@@ -1986,38 +2074,47 @@
                  output_weight:x.output_weight, remarks:x.remarks || '' };
       });
       /* MASLA: delivered/invoiced job edit hota tha — outputs dobara ban
-         jate the. HAL: aisa job sirf parhne ke liye; cancel bhi nahi. */
-      var locked = j.status !== 'cancelled' && lockBy.length > 0;
-      var ro = j.status === 'cancelled' || locked || !can('cutting_job_edit');
-      openEd(j.jno || 'Job', 'job', jobForm(j, ro), ro ? null : saveJob,
-             (j.status !== 'cancelled' && !locked && can('cutting_job_cancel')) ? cancelJob : null);
-      if (locked) {
+         jate the. HAL: jis sub order ka maal challan / invoice mein gaya
+         wo sirf parhne ke liye; usi job ke doosre sub orders badle ja sakte
+         hain. Job cancel / party / status tab tak nahi badal sakte jab tak
+         koi bhi sub order challan ya bill par ho. */
+      var anyLock = jobSubs.some(function (s) { return !!s.locked; });
+      var ro = j.status === 'cancelled' || !can('cutting_job_edit');
+      openEd(j.jno || 'Job', 'job', jobForm(j, ro, anyLock), ro ? null : saveJob,
+             (j.status !== 'cancelled' && !anyLock && can('cutting_job_cancel')) ? cancelJob : null);
+      if (anyLock) {
         $('edBody').insertAdjacentHTML('afterbegin', '<div class="card" id="jobLock"><div class="hint neg">' +
-          'Is job ka maal ' + esc(lockBy.join(', ')) + ' mein ja chuka hai — ab yeh job badla ya cancel ' +
-          'nahi ho sakta. Tabdeeli chahiye to pehle wo challan / invoice cancel karein.</div></div>');
+          (jobSubs.length > 1
+            ? 'Is job ke kuch sub orders ka maal challan / invoice mein ja chuka hai (' + esc(lockAll.join(', ')) + ') — ' +
+              'wo sub orders ab badle ya hataye nahi ja sakte. Baaqi sub orders badal sakte hain; naya sub order bhi ' +
+              'jod sakte hain. Tabdeeli chahiye to pehle wo challan / invoice cancel karein.'
+            : 'Is job ka maal ' + esc(lockAll.join(', ')) + ' mein ja chuka hai — ab yeh job badla ya cancel ' +
+              'nahi ho sakta. Tabdeeli chahiye to pehle wo challan / invoice cancel karein.') +
+          '</div></div>');
       }
-      if (!ro) wireJob(false);
-      else { drawJobInputs(true); drawJobOutputs(true); }
+      if (!ro) wireJob(false, anyLock);
+      else drawJobSubs(true);
       $('edSave').style.display = ro ? 'none' : '';
     });
   }
-  var jobOrig = { ins:{}, outs:{} };   // DB mein jo lines thin — save par sirf farq likhte hain
-  function jobForm(j, ro) {
+  var jobOrig = { ins:{}, outs:{}, subs:{} };   // DB mein jo lines thin — save par sirf farq likhte hain
+  function jobForm(j, ro, lockHdr) {
     j = j || {};
     var dis = ro ? ' disabled' : '';
+    var disHd = (ro || lockHdr) ? ' disabled' : '';
     return '<div class="card"><div class="ttl">Job</div>' +
       '<div class="f2">' +
         '<div class="f"><label>Date</label><input id="jDate" type="date" value="' + esc(j.jdate || todayPKT()) + '"' + dis + '></div>' +
         '<div class="f"><label>Warehouse</label><select id="jWh"' + dis + '>' + opts(warehouses, j.warehouse_id) + '</select></div>' +
       '</div>' +
-      '<div class="f"><label>Party</label><select id="jParty"' + dis + '>' +
-        opts(parties, j.party_id, '\u2014 Party chunein \u2014') + '</select>' +
+      '<div class="f"><label>Party</label><select id="jParty"' + disHd + '>' +
+        opts(parties, j.party_id, '— Party chunein —') + '</select>' +
         '<div class="hint">Party chunte hi usi ki coils input mein aayengi.</div></div>' +
       '<div class="f2">' +
-        '<div class="f"><label>Machine</label><select id="jMachine"' + dis + '>' + opts(machines, j.machine_id, '\u2014') + '</select></div>' +
-        '<div class="f"><label>Operator</label><select id="jOperator"' + dis + '>' + opts(operators, j.operator_id, '\u2014') + '</select></div>' +
+        '<div class="f"><label>Machine</label><select id="jMachine"' + dis + '>' + opts(machines, j.machine_id, '—') + '</select></div>' +
+        '<div class="f"><label>Operator</label><select id="jOperator"' + dis + '>' + opts(operators, j.operator_id, '—') + '</select></div>' +
       '</div>' +
-      '<div class="f"><label>Status</label><select id="jStatus"' + dis + '>' +
+      '<div class="f"><label>Status</label><select id="jStatus"' + disHd + '>' +
         '<option value="draft"' + (j.status === 'draft' || !j.status ? ' selected' : '') + '>Draft</option>' +
         '<option value="completed"' + (j.status === 'completed' ? ' selected' : '') +
           (can('cutting_job_complete') || j.status === 'completed' ? '' : ' disabled') + '>Completed</option>' +
@@ -2026,19 +2123,12 @@
       '<div class="f"><label>Remarks</label><textarea id="jRem"' + dis + '>' + esc(j.remarks || '') + '</textarea></div>' +
       '</div>' +
 
-      '<div class="card"><div class="ttl">Input \u2014 kaun si coil, kitna maal</div>' +
-      '<div class="lines" id="jobIn"></div>' +
-      '<div class="f" style="margin:10px 0 0"><div class="hint">Yeh sirf batata hai ke coil se kitna maal ' +
-      'kaatne ke liye uthaya. Party ke maal ka balance yahan se nahi ghatta \u2014 wo delivery challan ke ' +
-      'ACTUAL tole gaye weight se ghatta hai.</div></div>' +
-      (ro ? '' : '<button class="addln" id="addJobIn" style="border-radius:0 0 9px 9px">+ Input coil</button>') +
-      '</div>' +
-
-      '<div class="card"><div class="ttl">Cutting sizes \u2014 jo maal bana</div>' +
-      '<div class="lines" id="jobOut"></div>' +
-      (ro ? '' : '<button class="addln" id="addJobOut" style="border-radius:0 0 9px 9px">+ Cutting size</button>') +
-      '<div id="jobBal"></div>' +
-      '</div>';
+      '<div id="jobSubs"></div>' +
+      (hasSubOrders && !ro
+        ? '<button class="addln" id="addSub" style="border-radius:9px;margin:0 0 12px;width:100%;padding:12px;font-weight:600;' +
+          'border:1.5px dashed var(--accent)">+ Sub Order</button>'
+        : '') +
+      '<div id="jobBal"></div>';
   }
   function partyCoils(pid) {
     return coils.filter(function (c) {
@@ -2047,97 +2137,157 @@
     });
   }
   function coilLabel(c) {
-    return c.coil_serial + ' \u2014 ' + kg(c.raw_balance) + ' kg' +
-           (c.material_type ? ' \u00b7 ' + c.material_type : '') +
-           (c.thickness_mm ? ' \u00b7 ' + c.thickness_mm + 'mm' : '');
+    return c.coil_serial + ' — ' + kg(c.raw_balance) + ' kg' +
+           (c.material_type ? ' · ' + c.material_type : '') +
+           (c.thickness_mm ? ' · ' + c.thickness_mm + 'mm' : '');
   }
-  function drawJobInputs(ro) {
+  function subByK(k) { return jobSubs.filter(function (s) { return s._k === k; })[0]; }
+  /* Sub order ka number: saved ho to asli (SO-2); naya ho to agla number
+     (save par database asli number deta hai). */
+  function subNo(s) {
+    if (s.id) return s.sub_no;
+    var mx = 0;
+    jobSubs.forEach(function (x) { if (x.id && x.sub_no > mx) mx = x.sub_no; });
+    var n = 0;
+    for (var i = 0; i < jobSubs.length; i++) { if (!jobSubs[i].id) { n++; if (jobSubs[i] === s) break; } }
+    return mx + n;
+  }
+
+  function inLineHtml(l, avail, ro) {
+    var dis = ro ? ' disabled' : '';
+    var c = byId(coils, l.coil_id);
+    var list = avail.slice();
+    if (c && !list.some(function (x) { return x.id === c.id; })) list.push(c);
+    return '<div class="ln inln" data-k="' + l._k + '">' +
+      '<div class="top">' +
+        '<div class="f" style="flex:1;margin-bottom:0"><label>Coil</label>' +
+          '<select data-f="coil_id"' + dis + '>' +
+          '<option value="">— Coil chunein —</option>' +
+          list.map(function (x) {
+            return '<option value="' + esc(x.id) + '"' + (x.id === l.coil_id ? ' selected' : '') + '>' +
+                   esc(coilLabel(x)) + '</option>';
+          }).join('') + '</select></div>' +
+        (ro ? '' : '<button class="rm" data-rm="' + l._k + '" style="margin-top:18px">×</button>') +
+      '</div>' +
+      '<div class="f num" style="margin:8px 0 0"><label>Processing weight (KG)</label>' +
+        '<input data-f="input_weight" type="number" step="0.001" value="' + esc(l.input_weight) + '"' + dis + '>' +
+        '<div class="hint" data-bal="' + l._k + '"></div></div>' +
+      '</div>';
+  }
+  /* Har number ka apna unit — chaurai mm mein aur lambai feet mein bhi ho
+     sakti hai. db/33 abhi na chali ho to purana ek-unit wala switch hi
+     dikhta hai, taake kuch na tootay. */
+  function outLineHtml(l, ix, coilOpts, ro) {
+    var dis = ro ? ' disabled' : '';
+    function unitSw(field, list, cur) {
+      return '<div class="unitsw" data-unit="' + l._k + '" data-uf="' + field + '">' +
+        list.map(function (u) {
+          return '<button type="button" data-u="' + u + '"' +
+                 (cur === u ? ' class="on"' : '') + (ro ? ' disabled' : '') +
+                 '>' + u + '</button>';
+        }).join('') + '</div>';
+    }
+    return '<div class="ln szbox" data-k="' + l._k + '">' +
+      '<div class="top">' +
+        '<span class="szn">Size ' + (ix + 1) + '</span>' +
+        (hasSizeUnits ? '' : unitSw('size_unit', DIM_UNITS, l.size_unit || 'mm')) +
+        (ro ? '' : '<button class="rm" data-rm="' + l._k + '">×</button>') +
+      '</div>' +
+      '<div class="f2">' +
+        '<div class="f num" style="margin-bottom:7px"><label>Width</label>' +
+          '<input data-f="width" type="number" min="0" step="0.01" value="' + esc(l.width) + '"' + dis + '>' +
+          (hasSizeUnits ? '<div style="margin-top:6px">' + unitSw('width_unit', DIM_UNITS, wUnit(l)) + '</div>' : '') +
+        '</div>' +
+        '<div class="f num" style="margin-bottom:7px"><label>Length</label>' +
+          '<input data-f="length" type="number" min="0" step="0.01" value="' + esc(l.length) + '" placeholder="—"' + dis + '>' +
+          (hasSizeUnits ? '<div style="margin-top:6px">' + unitSw('length_unit', DIM_UNITS, lUnit(l)) + '</div>' : '') +
+        '</div>' +
+      '</div>' +
+      '<div class="f2">' +
+        '<div class="f num" style="margin-bottom:0"><label>Pieces</label>' +
+          '<input data-f="pieces" type="number" min="0" step="1" value="' + esc(l.pieces) + '" placeholder="—"' + dis + '></div>' +
+        '<div class="f num" style="margin-bottom:0"><label>Weight KG</label>' +
+          '<input data-f="output_weight" type="number" step="0.001" value="' + esc(l.output_weight) + '"' + dis + '></div>' +
+      '</div>' +
+      '<div class="hint" style="margin-top:-3px">Width, Length, Pieces aur coil ki thickness se ' +
+      'Weight khud ban jata hai — zaroorat pare to yahan badal bhi sakte hain.</div>' +
+      '<div class="f" style="margin:7px 0 0"><label>Remarks</label>' +
+        '<input data-f="remarks" type="text" value="' + esc(l.remarks) + '"' + dis + '></div>' +
+      (coilOpts.length > 1
+        ? '<div class="f" style="margin:7px 0 0"><label>Kis coil se</label>' +
+          '<select data-f="coil_id"' + dis + '>' +
+          coilOpts.map(function (cid) {
+            var c = byId(coils, cid);
+            return '<option value="' + esc(cid) + '"' + (cid === l.coil_id ? ' selected' : '') + '>' +
+                   esc(c ? c.coil_serial : '?') + '</option>';
+          }).join('') + '</select></div>'
+        : '') +
+      '</div>';
+  }
+
+  /* Sab sub orders ke card — har card mein uske apne input aur sizes. */
+  function drawJobSubs(ro) {
+    var box = $('jobSubs'); if (!box) return;
     var pid = val('jParty');
     var avail = partyCoils(pid);
-    var dis = ro ? ' disabled' : '';
-    $('jobIn').innerHTML = jobInputs.length ? jobInputs.map(function (l) {
-      var c = byId(coils, l.coil_id);
-      var list = avail.slice();
-      if (c && !list.some(function (x) { return x.id === c.id; })) list.push(c);
-      return '<div class="ln" data-k="' + l._k + '">' +
-        '<div class="top">' +
-          '<div class="f" style="flex:1;margin-bottom:0"><label>Coil</label>' +
-            '<select data-f="coil_id"' + dis + '>' +
-            '<option value="">\u2014 Coil chunein \u2014</option>' +
-            list.map(function (x) {
-              return '<option value="' + esc(x.id) + '"' + (x.id === l.coil_id ? ' selected' : '') + '>' +
-                     esc(coilLabel(x)) + '</option>';
-            }).join('') + '</select></div>' +
-          (ro ? '' : '<button class="rm" data-rm="' + l._k + '" style="margin-top:18px">\u00d7</button>') +
-        '</div>' +
-        '<div class="f num" style="margin:8px 0 0"><label>Processing weight (KG)</label>' +
-          '<input data-f="input_weight" type="number" step="0.001" value="' + esc(l.input_weight) + '"' + dis + '>' +
-          '<div class="hint" data-bal="' + l._k + '"></div></div>' +
-        '</div>';
-    }).join('') : '<div class="ln"><div class="hint">Koi input coil nahi. ' +
-      (pid ? '"+ Input coil" dabayein.' : 'Pehle party chunein.') + '</div></div>';
-    updateJobBalances();
-  }
-  function drawJobOutputs(ro) {
-    var dis = ro ? ' disabled' : '';
-    var coilOpts = jobInputs.filter(function (l) { return l.coil_id; });
-    $('jobOut').innerHTML = jobOutputs.length ? jobOutputs.map(function (l, ix) {
-      /* Har number ka apna unit — chaurai mm mein aur lambai feet mein
-         bhi ho sakti hai. db/33 abhi na chali ho to purana ek-unit wala
-         switch hi dikhta hai, taake kuch na tootay. */
-      function unitSw(field, list, cur) {
-        return '<div class="unitsw" data-unit="' + l._k + '" data-uf="' + field + '">' +
-          list.map(function (u) {
-            return '<button type="button" data-u="' + u + '"' +
-                   (cur === u ? ' class="on"' : '') + (ro ? ' disabled' : '') +
-                   '>' + u + '</button>';
-          }).join('') + '</div>';
-      }
-      return '<div class="ln szbox" data-k="' + l._k + '">' +
-        '<div class="top">' +
-          '<span class="szn">Size ' + (ix + 1) + '</span>' +
-          (hasSizeUnits ? '' : unitSw('size_unit', DIM_UNITS, l.size_unit || 'mm')) +
-          (ro ? '' : '<button class="rm" data-rm="' + l._k + '">\u00d7</button>') +
-        '</div>' +
-        '<div class="f2">' +
-          '<div class="f num" style="margin-bottom:7px"><label>Width</label>' +
-            '<input data-f="width" type="number" min="0" step="0.01" value="' + esc(l.width) + '"' + dis + '>' +
-            (hasSizeUnits ? '<div style="margin-top:6px">' + unitSw('width_unit', DIM_UNITS, wUnit(l)) + '</div>' : '') +
-          '</div>' +
-          '<div class="f num" style="margin-bottom:7px"><label>Length</label>' +
-            '<input data-f="length" type="number" min="0" step="0.01" value="' + esc(l.length) + '" placeholder="\u2014"' + dis + '>' +
-            (hasSizeUnits ? '<div style="margin-top:6px">' + unitSw('length_unit', DIM_UNITS, lUnit(l)) + '</div>' : '') +
-          '</div>' +
-        '</div>' +
-        '<div class="f2">' +
-          '<div class="f num" style="margin-bottom:0"><label>Pieces</label>' +
-            '<input data-f="pieces" type="number" min="0" step="1" value="' + esc(l.pieces) + '" placeholder="\u2014"' + dis + '></div>' +
-          '<div class="f num" style="margin-bottom:0"><label>Weight KG</label>' +
-            '<input data-f="output_weight" type="number" step="0.001" value="' + esc(l.output_weight) + '"' + dis + '></div>' +
-        '</div>' +
-        '<div class="hint" style="margin-top:-3px">Width, Length, Pieces aur coil ki thickness se ' +
-        'Weight khud ban jata hai — zaroorat pare to yahan badal bhi sakte hain.</div>' +
-        '<div class="f" style="margin:7px 0 0"><label>Remarks</label>' +
-          '<input data-f="remarks" type="text" value="' + esc(l.remarks) + '"' + dis + '></div>' +
-        (coilOpts.length > 1
-          ? '<div class="f" style="margin:7px 0 0"><label>Kis coil se</label>' +
-            '<select data-f="coil_id"' + dis + '>' +
-            coilOpts.map(function (ci) {
-              var c = byId(coils, ci.coil_id);
-              return '<option value="' + esc(ci.coil_id) + '"' + (ci.coil_id === l.coil_id ? ' selected' : '') + '>' +
-                     esc(c ? c.coil_serial : '?') + '</option>';
-            }).join('') + '</select></div>'
+    var multi = hasSubOrders;
+    box.innerHTML = jobSubs.map(function (s) {
+      var sro = ro || !!s.locked;
+      var dis = sro ? ' disabled' : '';
+      var ins = jobInputs.filter(function (l) { return l.sub_k === s._k; });
+      var outs = jobOutputs.filter(function (l) { return l.sub_k === s._k; });
+      var coilOpts = [];
+      ins.forEach(function (l) { if (l.coil_id && coilOpts.indexOf(l.coil_id) < 0) coilOpts.push(l.coil_id); });
+      var inHtml = ins.length
+        ? ins.map(function (l) { return inLineHtml(l, avail, sro); }).join('')
+        : '<div class="ln"><div class="hint">Koi input coil nahi. ' +
+          (pid ? (sro ? '' : '"+ Input coil" dabayein.') : 'Pehle party chunein.') + '</div></div>';
+      var outHtml = outs.length
+        ? outs.map(function (l, ix) { return outLineHtml(l, ix, coilOpts, sro); }).join('')
+        : '<div class="ln"><div class="hint">Abhi koi size nahi. ' + (sro ? '' : '"+ Cutting size" dabayein.') + '</div></div>';
+      return '<div class="card subcard" data-sk="' + s._k + '"' +
+          (multi ? ' style="border:2px solid var(--accent)"' : '') + '>' +
+        (multi
+          ? '<div class="ttl" style="display:flex;justify-content:space-between;align-items:center">' +
+              '<span>Sub Order ' + subNo(s) + '</span>' +
+              ((ro || s.locked || jobSubs.length < 2) ? ''
+                : '<button class="rm" data-rmsub="' + s._k + '" style="background:none;border:none;color:var(--mute);font-size:19px" aria-label="Sub order hatayein">×</button>') +
+            '</div>' +
+            '<div class="f" style="margin-bottom:10px"><label>Sub Order ka naam / reference</label>' +
+              '<input data-subname="' + s._k + '" type="text" maxlength="120" value="' + esc(s.name) + '" placeholder="jaise: Bilal ka Order A"' + dis + '></div>'
           : '') +
+        (s.locked && multi
+          ? '<div class="hint neg" style="margin-bottom:8px">Is sub order ka maal ' + esc(s.locked) + ' mein ja chuka hai — badla nahi ja sakta.</div>'
+          : '') +
+        '<div class="ttl" style="margin-top:2px">Input — kaun si coil, kitna maal</div>' +
+        '<div class="lines sub-in" data-subin="' + s._k + '">' + inHtml + '</div>' +
+        '<div class="f" style="margin:10px 0 0"><div class="hint">Yeh sirf batata hai ke coil se kitna maal ' +
+        'kaatne ke liye uthaya. Party ke maal ka balance yahan se nahi ghatta — wo delivery challan ke ' +
+        'ACTUAL tole gaye weight se ghatta hai.</div></div>' +
+        (sro ? '' : '<button class="addln add-in" data-addin="' + s._k + '" style="border-radius:0 0 9px 9px">+ Input coil</button>') +
+        '<div class="ttl" style="margin-top:14px">Cutting sizes — jo maal bana</div>' +
+        '<div class="lines sub-out" data-subout="' + s._k + '">' + outHtml + '</div>' +
+        (sro ? '' : '<button class="addln add-out" data-addout="' + s._k + '" style="border-radius:0 0 9px 9px">+ Cutting size</button>') +
+        (multi ? '<div data-subbal="' + s._k + '"></div>' : '') +
         '</div>';
-    }).join('') : '<div class="ln"><div class="hint">Abhi koi size nahi. ' +
-      (ro ? '' : '"+ Cutting size" dabayein.') + '</div></div>';
+    }).join('');
     updateJobBalances();
   }
 
-  function updateJobBalances() {
-    var inW  = jobInputs.reduce(function (t, l) { return t + num(l.input_weight); }, 0);
-    var outW = jobOutputs.reduce(function (t, l) { return t + num(l.output_weight); }, 0);
+  function sumW(list, f) { return list.reduce(function (t, l) { return t + num(l[f]); }, 0); }
+  function balBox(inW, outW, withHint) {
     var diff = outW - inW;
+    return '<div class="vbox">' +
+      '<div class="r"><span>Input weight</span><span class="v kg">' + kg(inW) + ' KG</span></div>' +
+      '<div class="r"><span>Output weight</span><span class="v kg">' + kg(outW) + ' KG</span></div>' +
+      '<div class="r tot"><span>Weight variance</span><span class="v kg ' + (diff < 0 ? 'warn' : '') + '">' +
+        (diff > 0 ? '+' : '') + kg(diff) + ' KG</span></div>' +
+      (withHint ? '<div class="hint">Yeh farq sirf record hota hai. System isay khud scrap nahi banata — ' +
+        'na hi input aur output ka barabar hona zaroori hai.</div>' : '') + '</div>';
+  }
+  function updateJobBalances() {
+    var inW  = sumW(jobInputs, 'input_weight');
+    var outW = sumW(jobOutputs, 'output_weight');
     jobInputs.forEach(function (l) {
       var el = document.querySelector('[data-bal="' + l._k + '"]'); if (!el) return;
       var c = byId(coils, l.coil_id);
@@ -2145,110 +2295,159 @@
       var orig = jobInputs.filter(function (x) { return x.id && x.coil_id === l.coil_id; })
                           .reduce(function (t, x) { return t + num(origInputW[x.id] || 0); }, 0);
       var avail = num(c.raw_balance) + orig;
-      var over = num(l.input_weight) > avail;
+      // ek hi coil kai sub orders mein ho sakti hai — hadd poore job ke hisaab se
+      var used = jobInputs.filter(function (x) { return x.coil_id === l.coil_id; })
+                          .reduce(function (t, x) { return t + num(x.input_weight); }, 0);
+      var over = used > avail;
+      var others = used - num(l.input_weight);
       el.innerHTML = 'Coil par <b class="kg">' + kg(avail) + ' KG</b> abhi kata nahi' +
-        (over ? ' \u2014 <span class="neg">itna maal nahi hai</span>' : '');
+        (others > 0 ? ' (is job mein baqi sub orders ne ' + kg(others) + ' KG liya)' : '') +
+        (over ? ' — <span class="neg">itna maal nahi hai</span>' : '');
+    });
+    jobSubs.forEach(function (s) {
+      var el = document.querySelector('[data-subbal="' + s._k + '"]'); if (!el) return;
+      var si = jobInputs.filter(function (l) { return l.sub_k === s._k; });
+      var so = jobOutputs.filter(function (l) { return l.sub_k === s._k; });
+      el.innerHTML = '<div style="margin-top:10px">' + balBox(sumW(si, 'input_weight'), sumW(so, 'output_weight'), false) + '</div>';
     });
     var bal = $('jobBal'); if (!bal) return;
-    bal.innerHTML = '<div class="vbox">' +
-      '<div class="r"><span>Input weight</span><span class="v kg">' + kg(inW) + ' KG</span></div>' +
-      '<div class="r"><span>Output weight</span><span class="v kg">' + kg(outW) + ' KG</span></div>' +
-      '<div class="r tot"><span>Weight variance</span><span class="v kg ' + (diff < 0 ? 'warn' : '') + '">' +
-        (diff > 0 ? '+' : '') + kg(diff) + ' KG</span></div>' +
-      '<div class="hint">Yeh farq sirf record hota hai. System isay khud scrap nahi banata \u2014 ' +
-      'na hi input aur output ka barabar hona zaroori hai.</div></div>';
+    bal.innerHTML = (hasSubOrders && jobSubs.length > 1
+      ? '<div class="card"><div class="ttl">Job ka kul hisaab — ' + jobSubs.length + ' sub orders</div>' +
+        balBox(inW, outW, true) + '</div>'
+      : balBox(inW, outW, true));
   }
   var origInputW = {};
 
-  function wireJob(ro) {
+  function wireJob(ro, lockHdr) {
     origInputW = {};
     jobInputs.forEach(function (l) { if (l.id) origInputW[l.id] = num(l.input_weight); });
-    drawJobInputs(ro); drawJobOutputs(ro);
+    drawJobSubs(ro);
 
     $('jParty').addEventListener('change', function () {
-      jobInputs = []; jobOutputs = []; markDirty(); drawJobInputs(false); drawJobOutputs(false);
+      jobInputs = []; jobOutputs = [];
+      markDirty(); drawJobSubs(false);
     });
     ['jDate','jWh','jMachine','jOperator','jStatus','jRem'].forEach(function (id) {
       if ($(id)) $(id).addEventListener('input', markDirty);
     });
-
-    $('jobIn').addEventListener('input', function (e) {
-      var f = e.target.getAttribute('data-f'); if (!f) return;
-      var k = num(e.target.closest('.ln').getAttribute('data-k'));
-      var l = jobInputs.filter(function (x) { return x._k === k; })[0];
-      if (!l) return;
-      l[f] = f === 'coil_id' ? e.target.value : e.target.value;
-      markDirty();
-      if (f === 'coil_id') { drawJobOutputs(false); }
-      updateJobBalances();
-    });
-    $('jobIn').addEventListener('change', function (e) {
-      if (e.target.getAttribute('data-f') === 'coil_id') { drawJobInputs(false); drawJobOutputs(false); }
-    });
-    $('jobIn').addEventListener('click', function (e) {
-      var k = e.target.getAttribute('data-rm'); if (!k) return;
-      jobInputs = jobInputs.filter(function (x) { return String(x._k) !== String(k); });
-      markDirty(); drawJobInputs(false); drawJobOutputs(false);
-    });
-    if ($('addJobIn')) $('addJobIn').addEventListener('click', function () {
+    if ($('addSub')) $('addSub').addEventListener('click', function () {
       if (!val('jParty')) { toast('Pehle party chunein', true); return; }
-      var av = partyCoils(val('jParty'));
-      jobInputs.push({ _k:++lineSeq, id:null, coil_id:av.length === 1 ? av[0].id : '', input_weight:'' });
-      markDirty(); drawJobInputs(false); drawJobOutputs(false);
+      jobSubs.push({ _k:++lineSeq, id:null, sub_no:0, name:'', locked:'' });
+      markDirty(); drawJobSubs(false);
+      var cards = $('jobSubs').querySelectorAll('.subcard');
+      var last = cards[cards.length - 1];
+      if (last && last.scrollIntoView) last.scrollIntoView({ block:'start', behavior:'smooth' });
     });
 
-    /* Width, Length, Pieces ya coil badalte hi Weight khud dobara ban
-       jati hai — coil ki mojooda thickness se, live. */
-    $('jobOut').addEventListener('input', function (e) {
+    var box = $('jobSubs');
+    var lineOf = function (list, e, sel) {
+      var el = e.target.closest(sel); if (!el) return null;
+      var k = num(el.getAttribute('data-k'));
+      return list.filter(function (x) { return x._k === k; })[0] || null;
+    };
+
+    box.addEventListener('input', function (e) {
+      var nm = e.target.getAttribute('data-subname');
+      if (nm) {
+        var s = subByK(num(nm)); if (s) { s.name = e.target.value; markDirty(); }
+        return;
+      }
       var f = e.target.getAttribute('data-f'); if (!f) return;
-      var k = num(e.target.closest('.szbox').getAttribute('data-k'));
-      var l = jobOutputs.filter(function (x) { return x._k === k; })[0];
-      if (l) { l[f] = e.target.value; markDirty(); }
-      if (f === 'width' || f === 'length' || f === 'pieces') recalcRowWeight(k);
-      updateJobBalances();
+      if (e.target.closest('.szbox')) {
+        var o = lineOf(jobOutputs, e, '.szbox');
+        if (o) { o[f] = e.target.value; markDirty(); }
+        /* Width, Length, Pieces ya coil badalte hi Weight khud dobara ban
+           jati hai — coil ki mojooda thickness se, live. */
+        if (f === 'width' || f === 'length' || f === 'pieces') recalcRowWeight(num(e.target.closest('.szbox').getAttribute('data-k')));
+        updateJobBalances();
+      } else if (e.target.closest('.inln')) {
+        var l = lineOf(jobInputs, e, '.inln');
+        if (!l) return;
+        l[f] = e.target.value; markDirty();
+        updateJobBalances();
+      }
     });
-    $('jobOut').addEventListener('change', function (e) {
+    box.addEventListener('change', function (e) {
       if (e.target.getAttribute('data-f') !== 'coil_id') return;
-      var k = num(e.target.closest('.szbox').getAttribute('data-k'));
-      var l = jobOutputs.filter(function (x) { return x._k === k; })[0];
-      if (l) { l.coil_id = e.target.value; markDirty(); }
-      recalcRowWeight(k);
+      if (e.target.closest('.szbox')) {
+        var o = lineOf(jobOutputs, e, '.szbox');
+        if (o) { o.coil_id = e.target.value; markDirty(); recalcRowWeight(o._k); }
+      } else if (e.target.closest('.inln')) {
+        var l = lineOf(jobInputs, e, '.inln');
+        if (l) { l.coil_id = e.target.value; markDirty(); }
+        drawJobSubs(false);
+      }
     });
-    $('jobOut').addEventListener('click', function (e) {
-      var k = e.target.getAttribute('data-rm'); if (!k) return;
-      jobOutputs = jobOutputs.filter(function (x) { return String(x._k) !== String(k); });
-      markDirty(); drawJobOutputs(false);
-    });
-    if ($('addJobOut')) $('addJobOut').addEventListener('click', function () {
-      var withCoil = jobInputs.filter(function (l) { return l.coil_id; });
-      if (!withCoil.length) { toast('Pehle input coil chunein', true); return; }
-      var lastSz = jobOutputs[jobOutputs.length - 1];
-      jobOutputs.push({ _k:++lineSeq, id:null, coil_id:withCoil[0].coil_id,
-                        size_unit:lastSz ? (lastSz.size_unit || 'mm') : 'mm',
-                        width_unit:lastSz ? wUnit(lastSz) : 'mm',
-                        length_unit:lastSz ? lUnit(lastSz) : 'mm',
-                        width:'', length:'', pieces:'', output_weight:'', remarks:'' });
-      markDirty(); drawJobOutputs(false);
-      var rows = $('jobOut').querySelectorAll('.szbox');
-      var last = rows[rows.length - 1];
-      if (last) last.querySelector('input[data-f="width"]').focus();
-    });
-    /* Har size ka apna unit — ek hi job mein kuch sizes mm mein aur kuch
-       feet mein ho sakti hain. Ab width, length aur ginti — teenon ka
-       apna apna unit. Kaunsa field badalna hai, wo tag khud batata hai. */
-    $('jobOut').addEventListener('click', function (e) {
-      var u = e.target.getAttribute('data-u'); if (!u) return;
-      var box = e.target.closest('[data-unit]'); if (!box) return;
-      var field = box.getAttribute('data-uf') || 'size_unit';
-      var k = num(box.getAttribute('data-unit'));
-      var l = jobOutputs.filter(function (x) { return x._k === k; })[0];
-      if (!l || l[field] === u) return;
-      l[field] = u; markDirty();
-      box.querySelectorAll('button').forEach(function (b) {
-        b.classList.toggle('on', b.getAttribute('data-u') === u);
-      });
-      // Width ya Length ka unit badla — Weight naye unit se dobara ban jaye
-      recalcRowWeight(k);
+    box.addEventListener('click', function (e) {
+      var t = e.target;
+      // size / input hatana
+      var rm = t.getAttribute && t.getAttribute('data-rm');
+      if (rm) {
+        if (t.closest('.szbox')) jobOutputs = jobOutputs.filter(function (x) { return String(x._k) !== String(rm); });
+        else jobInputs = jobInputs.filter(function (x) { return String(x._k) !== String(rm); });
+        markDirty(); drawJobSubs(false); return;
+      }
+      // sub order hatana (uski lines bhi)
+      var rs = t.getAttribute && t.getAttribute('data-rmsub');
+      if (rs) {
+        var s = subByK(num(rs));
+        var hasData = jobInputs.concat(jobOutputs).some(function (x) { return x.sub_k === s._k; });
+        var go = function () {
+          jobInputs  = jobInputs.filter(function (x) { return x.sub_k !== s._k; });
+          jobOutputs = jobOutputs.filter(function (x) { return x.sub_k !== s._k; });
+          jobSubs = jobSubs.filter(function (x) { return x !== s; });
+          markDirty(); drawJobSubs(false);
+        };
+        if (!hasData) { go(); return; }
+        confirmBox('Sub Order hatayein?', 'Is sub order ke input aur cutting sizes bhi hat jayenge (Save karne par).', 'Hatayein')
+          .then(function (ok) { if (ok) go(); });
+        return;
+      }
+      var ai = t.getAttribute && t.getAttribute('data-addin');
+      if (ai) {
+        if (!val('jParty')) { toast('Pehle party chunein', true); return; }
+        var av = partyCoils(val('jParty')).filter(function (c) {
+          return !jobInputs.some(function (l) { return l.coil_id === c.id && l.sub_k === num(ai); });
+        });
+        jobInputs.push({ _k:++lineSeq, id:null, sub_k:num(ai), coil_id:av.length === 1 ? av[0].id : '', input_weight:'' });
+        markDirty(); drawJobSubs(false); return;
+      }
+      var ao = t.getAttribute && t.getAttribute('data-addout');
+      if (ao) {
+        var sk = num(ao);
+        var withCoil = jobInputs.filter(function (l) { return l.sub_k === sk && l.coil_id; });
+        if (!withCoil.length) { toast('Pehle is sub order ka input coil chunein', true); return; }
+        var mine = jobOutputs.filter(function (l) { return l.sub_k === sk; });
+        var lastSz = mine[mine.length - 1] || jobOutputs[jobOutputs.length - 1];
+        jobOutputs.push({ _k:++lineSeq, id:null, sub_k:sk, coil_id:withCoil[0].coil_id,
+                          size_unit:lastSz ? (lastSz.size_unit || 'mm') : 'mm',
+                          width_unit:lastSz ? wUnit(lastSz) : 'mm',
+                          length_unit:lastSz ? lUnit(lastSz) : 'mm',
+                          width:'', length:'', pieces:'', output_weight:'', remarks:'' });
+        markDirty(); drawJobSubs(false);
+        var card = $('jobSubs').querySelector('.subcard[data-sk="' + sk + '"]');
+        var rows = card ? card.querySelectorAll('.szbox') : [];
+        var last = rows[rows.length - 1];
+        if (last) last.querySelector('input[data-f="width"]').focus();
+        return;
+      }
+      /* Har size ka apna unit — ek hi job mein kuch sizes mm mein aur kuch
+         feet mein ho sakti hain. Ab width, length aur ginti — teenon ka
+         apna apna unit. Kaunsa field badalna hai, wo tag khud batata hai. */
+      var u = t.getAttribute && t.getAttribute('data-u');
+      if (u) {
+        var ub = t.closest('[data-unit]'); if (!ub) return;
+        var field = ub.getAttribute('data-uf') || 'size_unit';
+        var k = num(ub.getAttribute('data-unit'));
+        var l2 = jobOutputs.filter(function (x) { return x._k === k; })[0];
+        if (!l2 || l2[field] === u) return;
+        l2[field] = u; markDirty();
+        ub.querySelectorAll('button').forEach(function (b) {
+          b.classList.toggle('on', b.getAttribute('data-u') === u);
+        });
+        // Width ya Length ka unit badla — Weight naye unit se dobara ban jaye
+        recalcRowWeight(k);
+      }
     });
   }
   /* Width, Length, Pieces aur coil ki thickness se Weight khud nikalna.
@@ -2292,17 +2491,45 @@
     if (jobOutputs.some(function (l) { return num(l.width) < 0 || num(l.length) < 0 || num(l.pieces) < 0; })) {
       toast('Width, Length aur Pieces manfi nahi ho sakte', true); return false;
     }
-    var inCoils = ins.map(function (l) { return l.coil_id; });
-    if (outs.some(function (l) { return inCoils.indexOf(l.coil_id) < 0; })) {
-      toast('Har cutting size ki coil input mein honi chahiye', true); return false;
-    }
 
+    /* Kaun se sub orders save honge: jin mein koi line hai, ya jo pehle se
+       database mein hain. Khali naya sub order chupchaap chhod diya jata hai. */
+    var activeSubs = jobSubs.filter(function (s) {
+      return ins.some(function (l) { return l.sub_k === s._k; }) ||
+             outs.some(function (l) { return l.sub_k === s._k; });
+    });
+    if (!hasSubOrders) activeSubs = jobSubs.slice(0, 1);
+    for (var si = 0; si < activeSubs.length; si++) {
+      var s = activeSubs[si];
+      var tag = hasSubOrders && jobSubs.length > 1 ? 'Sub Order ' + subNo(s) + ': ' : '';
+      var sIns = ins.filter(function (l) { return l.sub_k === s._k; });
+      var sOuts = outs.filter(function (l) { return l.sub_k === s._k; });
+      var anyRows = jobInputs.concat(jobOutputs).some(function (l) { return l.sub_k === s._k; });
+      if (!sIns.length && (sOuts.length || anyRows)) {
+        toast(tag + 'input coil aur weight daalein', true); return false;
+      }
+      var sCoils = sIns.map(function (l) { return l.coil_id; });
+      if (sOuts.some(function (l) { return sCoils.indexOf(l.coil_id) < 0; })) {
+        toast(tag + 'har cutting size ki coil usi sub order ke input mein honi chahiye', true); return false;
+      }
+      if (head.status === 'completed' && sIns.length && !sOuts.length) {
+        toast(tag + 'Completed karne se pehle cutting sizes daalein (ya yeh sub order hata dein)', true); return false;
+      }
+    }
+    // jis sub order ki koi bhi valid line nahi (aur wo naya hai) uski kachchi lines bhi nahi likhni
+    var keepSubK = {};
+    activeSubs.forEach(function (s) { keepSubK[s._k] = 1; });
+    ins  = ins.filter(function (l) { return keepSubK[l.sub_k]; });
+    outs = outs.filter(function (l) { return keepSubK[l.sub_k]; });
     /* MASLA: pehle saare outputs delete kar ke dobara daalte the. Challan
        wale output ka delete FK par fail hota, error nazar-andaz hota aur
        outputs dobara ban jate (maal double). HAL: purani lines id se wahin
        update, nayi insert, sirf hatayi gayi delete — har result check. */
+    var sidOf = function (l) { var s = subByK(l.sub_k); return s ? s.id : null; };
     var inRow = function (l, i, jid) {
-      return { job_id:jid, coil_id:l.coil_id, input_weight:num(l.input_weight), line_no:i };
+      var row = { job_id:jid, coil_id:l.coil_id, input_weight:num(l.input_weight), line_no:i };
+      if (hasSubOrders) row.sub_order_id = sidOf(l);
+      return row;
     };
     var outRow = function (l, i, jid) {
       /* size_unit purani reports ke liye rakha hai — usi mein width
@@ -2318,12 +2545,16 @@
         row.width_unit  = wUnit(l);
         row.length_unit = lUnit(l);
       }
+      if (hasSubOrders) row.sub_order_id = sidOf(l);
       return row;
     };
     var keep = {};
     ins.concat(outs).forEach(function (l) { if (l.id) keep[l.id] = 1; });
     var delOuts = Object.keys(jobOrig.outs).filter(function (id) { return !keep[id]; });
     var delIns  = Object.keys(jobOrig.ins).filter(function (id) { return !keep[id]; });
+    var keepSubId = {};
+    activeSubs.forEach(function (s) { if (s.id) keepSubId[s.id] = 1; });
+    var delSubs = hasSubOrders ? Object.keys(jobOrig.subs).filter(function (id) { return !keepSubId[id]; }) : [];
 
     // Hatayi gayi size kisi challan mein darj ho to kuch bhi likhne se pehle rok do
     var pre = delOuts.length
@@ -2350,15 +2581,51 @@
         if (r.error) throw r.error;
         var job = r.data;
         return withRollback('cutting_jobs', job.id, !doc, function () {
-          return writeLines('cutting_job_inputs', jobOrig.ins, ins, function (l, i) { return inRow(l, i, job.id); })
+          return writeSubs(job.id, activeSubs)
+            .then(function () {
+              return writeLines('cutting_job_inputs', jobOrig.ins, ins, function (l, i) { return inRow(l, i, job.id); });
+            })
             .then(function () {
               return writeLines('cutting_job_outputs', jobOrig.outs, outs, function (l, i) { return outRow(l, i, job.id); });
             })
             .then(function () { return delLines('cutting_job_outputs', jobOrig.outs, delOuts); })
             .then(function () { return delLines('cutting_job_inputs', jobOrig.ins, delIns); })
+            .then(function () { return delSubOrders(delSubs); })
             .then(function () { toast(doc ? 'Job update ho gaya' : 'Job ban gaya'); });
         });
       });
+    });
+  }
+  /* Sub orders ka header: naya insert (sub_no database deta hai), purane ka
+     naam badla ho to update. Har result check. */
+  function writeSubs(jobId, subs) {
+    if (!hasSubOrders) return Promise.resolve();
+    return subs.reduce(function (chain, s) {
+      return chain.then(function () {
+        var name = String(s.name || '').trim();
+        if (s.id) {
+          var o = jobOrig.subs[s.id];
+          if (o && String(o.name || '') === name) return null;
+          return sb.from('cutting_sub_orders').update({ name:name }).eq('id', s.id).select('id,sub_no').then(function (r) {
+            if (r.error) throw r.error;
+            if (!r.data || !r.data.length) throw new Error('Sub order update nahi hua (shayad ijazat nahi) — page refresh kar ke dobara dekhein');
+            jobOrig.subs[s.id] = { id:s.id, name:name };
+          });
+        }
+        return sb.from('cutting_sub_orders').insert({ job_id:jobId, name:name }).select('id,sub_no').single().then(function (r) {
+          if (r.error) throw r.error;
+          s.id = r.data.id; s.sub_no = r.data.sub_no;
+          if (doc) jobOrig.subs[s.id] = { id:s.id, name:name };
+        });
+      });
+    }, Promise.resolve());
+  }
+  function delSubOrders(ids) {
+    if (!ids.length) return Promise.resolve();
+    return sb.from('cutting_sub_orders').delete().in('id', ids).select('id').then(function (r) {
+      if (r.error) throw r.error;
+      if ((r.data || []).length !== ids.length) throw new Error('Kuch sub orders delete nahi hue (shayad ijazat nahi) — page refresh kar ke dobara dekhein');
+      if (doc) ids.forEach(function (id) { delete jobOrig.subs[id]; });
     });
   }
   /* Lines ko id se likhna: badli hui update, nayi insert. Purane document
@@ -2467,7 +2734,7 @@
         '<div class="top"><div style="flex:1;min-width:0">' +
           '<div class="nm" style="font-weight:600">' + esc(c ? c.coil_serial : '\u2014') + '</div>' +
           '<div class="sub" style="font-size:11.5px;color:var(--mute)">' +
-            (j ? esc(j.jno) + ' \u00b7 ' : '') +
+            (j ? esc(j.jno) + esc(soSuffix(l.job_id, soOfOutput(l.output_id))) + ' \u00b7 ' : '') +
             (c ? [c.material_type, mm(c.thickness_mm)].filter(Boolean).map(esc).join(' \u00b7 ') : '') +
           '</div></div>' +
           (ro ? '' : '<button class="rm" data-rm="' + l._k + '">\u00d7</button>') +
@@ -2590,11 +2857,13 @@
     ids = ids.filter(function (x, i) { return x && ids.indexOf(x) === i; });
     if (!ids.length) return Promise.resolve();
     return sb.from('cutting_job_outputs')
-      .select('id,width,length,size_unit,pieces' + (hasSizeUnits ? ',width_unit,length_unit' : ''))
+      .select('id,width,length,size_unit,pieces' + (hasSizeUnits ? ',width_unit,length_unit' : '') + (hasSubOrders ? ',sub_order_id' : ''))
       .in('id', ids)
       .then(function (o) { (o.data || []).forEach(function (x) { readyCache[x.id] = x; }); },
             function () {});
   }
+  // output ka sub order (loadOutputSizes ke baad readyCache mein)
+  function soOfOutput(oid) { var o = oid ? readyCache[oid] : null; return (o && o.sub_order_id) || ''; }
   function pickReadyMaterial() {
     var pid = val('dParty');
     if (!pid) { toast('Pehle party chunein', true); return; }
@@ -2619,7 +2888,7 @@
             var o = readyCache[x.output_id];
             return { key:x.output_id,
                      nm:x.coil_serial + (o && o.width != null ? ' \u00b7 ' + sizeTight(o) : ''),
-                     sub:x.jno + ' \u00b7 ' + (x.pieces || 0) + ' pcs',
+                     sub:x.jno + soSuffix(x.job_id, soOfOutput(x.output_id)) + ' \u00b7 ' + (x.pieces || 0) + ' pcs',
                      amt:kg(x.pending_weight) + ' kg' };
           }, function (sel) {
             sel.forEach(function (x) {
@@ -3199,7 +3468,7 @@
                  description:x.description || '', calc_method:x.calc_method,
                  qty:x.qty, rate:x.rate, tax_pct:x.tax_pct, remarks:x.remarks || '' };
       });
-      invJobs = (r[1].data || []).map(function (x) { return x.job_id; });
+      invJobs = (r[1].data || []).map(function (x) { return { job_id:x.job_id, sub_order_id:x.sub_order_id || null }; });
       var ro = d.status === 'cancelled' || !can('service_invoice_edit');
       openEd(d.sino || 'Invoice', 'invoice', invoiceForm(d, ro), ro ? null : saveInvoice,
              (d.status !== 'cancelled' && can('service_invoice_cancel')) ? cancelInvoice : null);
@@ -3241,15 +3510,24 @@
         esc(d.paid || 0) + '"' + dis + '></div>' +
       '<div class="sum" id="invSum"></div></div>';
   }
+  /* Invoice par bill hone wali cheez: ek sub order (job_id + sub_order_id).
+     Purani DB (sub order nahi) mein poora job (sub_order_id null). */
+  function invKey(x) { return x.job_id + '|' + (x.sub_order_id || ''); }
+  function invLabel(x) {
+    var j = byId(jobs, x.job_id);
+    var s = x.sub_order_id ? byId(subOrders, x.sub_order_id) : null;
+    var multi = s && subsOfJob(x.job_id).length > 1;
+    return (j ? j.jno : x.job_id) + (multi ? ' · ' + subTag(s) + (s.name ? ' ' + s.name : '') : '');
+  }
   function drawInvJobs(ro) {
     var box = $('invJobs');
     if (!invJobs.length) { box.innerHTML = '<div class="hint">Koi job link nahi. Charges phir bhi bill kar sakte hain.</div>'; return; }
-    box.innerHTML = '<div class="sel">' + invJobs.map(function (jid) {
-      var j = byId(jobs, jid);
+    box.innerHTML = '<div class="sel">' + invJobs.map(function (x) {
+      var j = byId(jobs, x.job_id);
       return '<div class="selrow" style="cursor:default">' +
-        '<div class="mid"><div class="nm">' + esc(j ? j.jno : jid) + '</div>' +
+        '<div class="mid"><div class="nm">' + esc(invLabel(x)) + '</div>' +
         '<div class="sub">' + (j ? fmtDate(j.jdate) : '') + '</div></div>' +
-        (ro ? '' : '<button class="rm" data-rmjob="' + esc(jid) + '" style="background:none;border:none;color:var(--mute);font-size:19px">\u00d7</button>') +
+        (ro ? '' : '<button class="rm" data-rmjob="' + esc(invKey(x)) + '" style="background:none;border:none;color:var(--mute);font-size:19px">×</button>') +
         '</div>';
     }).join('') + '</div>';
   }
@@ -3325,7 +3603,7 @@
     });
     $('invJobs').addEventListener('click', function (e) {
       var jid = e.target.getAttribute('data-rmjob'); if (!jid) return;
-      invJobs = invJobs.filter(function (x) { return x !== jid; });
+      invJobs = invJobs.filter(function (x) { return invKey(x) !== jid; });
       markDirty(); drawInvJobs(false);
     });
     if ($('addInvJob')) $('addInvJob').addEventListener('click', pickUnbilledJobs);
@@ -3368,20 +3646,33 @@
       markDirty(); drawInvLines(false);
     });
   }
+  /* Bill ke liye unbilled sub orders (ya purani DB mein poore jobs). Kai chun lein:
+     ek hi job ke saare sub orders, ya alag alag jobs ke — sab ek invoice par. */
   function pickUnbilledJobs() {
     var pid = val('sParty');
     if (!pid) { toast('Pehle party chunein', true); return; }
-    sb.from('unbilled_jobs_v').select('*').eq('party_id', pid).then(function (r) {
+    sb.from(hasSubOrders ? 'unbilled_sub_orders_v' : 'unbilled_jobs_v').select('*').eq('party_id', pid)
+      .order('jdate', { ascending:false }).then(function (r) {
       if (r.error) { sayErr(r.error, 'Load'); return; }
-      var rows = (r.data || []).filter(function (x) { return invJobs.indexOf(x.job_id) < 0; });
-      if (!rows.length) { toast('Is party ka koi unbilled job nahi'); return; }
-      openPicker('Unbilled jobs', rows, function (x) {
-        return { key:x.job_id, nm:x.jno,
-                 sub:fmtDate(x.jdate) + ' \u00b7 ' + kg(x.output_weight) + ' kg \u00b7 ' + (x.total_pieces || 0) + ' pcs',
+      var rows = (r.data || []).filter(function (x) {
+        return !invJobs.some(function (y) { return invKey(y) === invKey({ job_id:x.job_id, sub_order_id:x.sub_order_id || null }); });
+      });
+      if (!rows.length) { toast(hasSubOrders ? 'Is party ka koi unbilled sub order nahi' : 'Is party ka koi unbilled job nahi'); return; }
+      rows.sort(function (a, b) { return String(a.jno).localeCompare(String(b.jno)) || (a.sub_no || 0) - (b.sub_no || 0); });
+      var jobSubCount = {};
+      rows.forEach(function (x) { jobSubCount[x.job_id] = (jobSubCount[x.job_id] || 0) + 1; });
+      openPicker(hasSubOrders ? 'Unbilled sub orders' : 'Unbilled jobs', rows, function (x) {
+        var many = hasSubOrders && (jobSubCount[x.job_id] > 1 || subsOfJob(x.job_id).length > 1);
+        return { key:invKey({ job_id:x.job_id, sub_order_id:x.sub_order_id || null }),
+                 nm:x.jno + (many ? ' · SO-' + x.sub_no + (x.sub_name ? ' ' + x.sub_name : '') : ''),
+                 sub:fmtDate(x.jdate) + ' · ' + kg(x.output_weight) + ' kg · ' + (x.total_pieces || 0) + ' pcs',
                  amt:kg(x.input_weight) + ' kg' };
       }, function (sel) {
         var addKg = 0;
-        sel.forEach(function (x) { invJobs.push(x.job_id); addKg += num(x.output_weight); });
+        sel.forEach(function (x) {
+          invJobs.push({ job_id:x.job_id, sub_order_id:x.sub_order_id || null });
+          addKg += num(x.output_weight);
+        });
         markDirty(); drawInvJobs(false);
         // pehli line mein weight khud bhar do — rate user likhega
         var line = invLines.filter(function (l) { return l.calc_method === 'kg'; })[0];
@@ -3427,8 +3718,10 @@
       }).then(function (rd) {
         if (rd.error) throw rd.error;
         if (!invJobs.length) return { error:null };
-        return sb.from('service_invoice_jobs').insert(invJobs.map(function (j) {
-          return { invoice_id:inv.id, job_id:j };
+        return sb.from('service_invoice_jobs').insert(invJobs.map(function (x) {
+          var row = { invoice_id:inv.id, job_id:x.job_id };
+          if (hasSubOrders && x.sub_order_id) row.sub_order_id = x.sub_order_id;
+          return row;
         }));
       }).then(function (r3) {
         if (r3 && r3.error) throw r3.error;
@@ -4616,18 +4909,20 @@
           return pOK(x.party_id) && wOK(x.warehouse_id);
         });
         var T11 = { pcs:0, w:0 };
-        var out11 = rows11.map(function (x) {
-          T11.pcs += num(x.pieces); T11.w += num(x.pending_weight);
-          return { c:'<span class="doc">' + esc(x.coil_serial) + '</span>',
-                   p:esc(x.party_name), j:esc(x.jno),
-                   wd:sizeText(x), pcs:kg(x.pieces),
-                   o:kg(x.output_weight), d:kg(x.delivered_weight),
-                   w:'<b>' + kg(x.pending_weight) + '</b>' };
+        return loadOutputSizes(rows11.map(function (x) { return x.output_id; })).then(function () {
+          var out11 = rows11.map(function (x) {
+            T11.pcs += num(x.pieces); T11.w += num(x.pending_weight);
+            return { c:'<span class="doc">' + esc(x.coil_serial) + '</span>',
+                     p:esc(x.party_name), j:esc(x.jno + soSuffix(x.job_id, soOfOutput(x.output_id))),
+                     wd:sizeText(x), pcs:kg(x.pieces),
+                     o:kg(x.output_weight), d:kg(x.delivered_weight),
+                     w:'<b>' + kg(x.pending_weight) + '</b>' };
+          });
+          show(tbl([{k:'c',t:'Coil'},{k:'p',t:'Party'},{k:'j',t:'Job'},{k:'wd',t:'Cut size'},
+                    {k:'pcs',t:'Pcs',r:1},{k:'o',t:'Bana',r:1},{k:'d',t:'Gaya',r:1},
+                    {k:'w',t:'Tayyar',r:1}], out11,
+            { c:'Total', p:'', j:'', wd:'', pcs:kg(T11.pcs), o:'', d:'', w:kg(T11.w) }));
         });
-        show(tbl([{k:'c',t:'Coil'},{k:'p',t:'Party'},{k:'j',t:'Job'},{k:'wd',t:'Cut size'},
-                  {k:'pcs',t:'Pcs',r:1},{k:'o',t:'Bana',r:1},{k:'d',t:'Gaya',r:1},
-                  {k:'w',t:'Tayyar',r:1}], out11,
-          { c:'Total', p:'', j:'', wd:'', pcs:kg(T11.pcs), o:'', d:'', w:kg(T11.w) }));
       });
 
     } else if (k === 'challan_rpt' || k === 'party_delivered') {
@@ -4683,19 +4978,19 @@
 
     /* ═══ Service Billing ═══ */
     } else if (k === 'unbilled') {
-      sb.from('unbilled_jobs_v').select('*').order('jdate', { ascending:false }).then(function (r) {
+      sb.from(hasSubOrders ? 'unbilled_sub_orders_v' : 'unbilled_jobs_v').select('*').order('jdate', { ascending:false }).then(function (r) {
         if (r.error) return fail();
         var rows14 = (r.data || []).filter(function (x) { return pOK(x.party_id); });
         var T14 = { i:0, o:0, pcs:0 };
         var out14 = rows14.map(function (x) {
           T14.i += num(x.input_weight); T14.o += num(x.output_weight); T14.pcs += num(x.total_pieces);
-          return { j:'<span class="doc">' + esc(x.jno) + '</span>', d:fmtDate(x.jdate),
+          return { j:'<span class="doc">' + esc(x.jno + (hasSubOrders && subsOfJob(x.job_id).length > 1 ? ' \u00b7 SO-' + x.sub_no : '')) + '</span>', d:fmtDate(x.jdate),
                    p:esc(x.party_name), i:kg(x.input_weight), o:kg(x.output_weight),
                    pc:kg(x.total_pieces), age:daysAgo(x.jdate) };
         });
         show(tbl([{k:'j',t:'Job'},{k:'d',t:'Tareekh'},{k:'p',t:'Party'},{k:'i',t:'Input KG',r:1},
                   {k:'o',t:'Output KG',r:1},{k:'pc',t:'Pieces',r:1},{k:'age',t:'Din',r:1}], out14,
-          { j:'Total', d:'', p:rows14.length + ' jobs', i:kg(T14.i), o:kg(T14.o),
+          { j:'Total', d:'', p:rows14.length + (hasSubOrders ? ' sub orders' : ' jobs'), i:kg(T14.i), o:kg(T14.o),
             pc:kg(T14.pcs), age:'' }));
       });
 
@@ -5195,7 +5490,7 @@
       return '<tr><td class="c">' + (i + 1) + '</td>' +
         '<td>' + esc(c ? c.coil_serial : '') +
           (c && c.party_coil_ref ? '<div style="font-size:8.5pt;color:#9C9384">Ref ' + esc(c.party_coil_ref) + '</div>' : '') +
-          (j ? '<div style="font-size:8.5pt;color:#9C9384">' + esc(j.jno) + '</div>' : '') + '</td>' +
+          (j ? '<div style="font-size:8.5pt;color:#9C9384">' + esc(j.jno) + esc(soSuffix(l.job_id, soOfOutput(l.output_id))) + '</div>' : '') + '</td>' +
         '<td>' + esc(c ? [c.material_type, c.grade].filter(Boolean).join(' / ') : '') + '</td>' +
         '<td class="c">' + esc(c && c.thickness_mm ? c.thickness_mm : '') + '</td>' +
         // har number ke saath apna unit ("4ft \u00d7 300mm") — receipt ki tarah
@@ -5299,9 +5594,16 @@
     if (paid) foot += frow('Paid', '\u2212 ' + money(paid));
     if (due)  foot += frow('Balance receivable', money(due));
 
-    var jobList = invJobs.map(function (jid) {
-      var j = byId(jobs, jid); return j ? j.jno : null;
-    }).filter(Boolean);
+    // "CJ-0012 (SO-1, SO-2), CJ-0015" — jis job ke kai sub orders hon unhein ek saath
+    var jobList = [], jobSeen = {};
+    invJobs.forEach(function (x) {
+      var j = byId(jobs, x.job_id); if (!j) return;
+      var s = x.sub_order_id ? byId(subOrders, x.sub_order_id) : null;
+      var multi = s && subsOfJob(x.job_id).length > 1;
+      if (!jobSeen[j.jno]) { jobSeen[j.jno] = { no:j.jno, subs:[] }; jobList.push(jobSeen[j.jno]); }
+      if (multi) jobSeen[j.jno].subs.push(subTag(s) + (s.name ? ' ' + s.name : ''));
+    });
+    jobList = jobList.map(function (o) { return o.no + (o.subs.length ? ' (' + o.subs.join(', ') + ')' : ''); });
 
     var co = byId(companies, d.company_id) || defFirm();
     var coStrn = (taxOn && co && co.strn) ? '<div class="adr">STRN ' + esc(co.strn) + '</div>' : '';
@@ -5380,43 +5682,85 @@
     if (!doc) return;
     var d = doc, p = byId(parties, d.party_id);
 
-    var inGood = jobInputs.filter(function (l) { return l.coil_id && num(l.input_weight) > 0; });
-    if (!inGood.length) { toast('Pehle coil aur weight daalein', true); return; }
+    var inAll = jobInputs.filter(function (l) { return l.coil_id && num(l.input_weight) > 0; });
+    if (!inAll.length) { toast('Pehle coil aur weight daalein', true); return; }
+    var outAll = jobOutputs.filter(function (l) { return num(l.output_weight) > 0 || num(l.pieces) > 0; });
 
-    var inT = 0;
-    var inRows = inGood.map(function (l, i) {
-      var c = byId(coils, l.coil_id);
-      inT += num(l.input_weight);
-      return '<tr><td class="c">' + (i + 1) + '</td>' +
-        '<td>' + esc(c ? c.coil_serial : '') +
-          (c && c.party_coil_ref ? '<div style="font-size:8.5pt;color:#9C9384">Ref ' +
-            esc(c.party_coil_ref) + '</div>' : '') + '</td>' +
-        '<td>' + esc(c ? [c.material_type, c.grade].filter(Boolean).join(' / ') : '') + '</td>' +
-        '<td class="c">' + esc(c && c.thickness_mm ? c.thickness_mm : '') + '</td>' +
-        '<td class="c">' + esc(c && c.width_mm ? c.width_mm + ' mm' : '') + '</td>' +
-        '<td class="r">' + kg(l.input_weight) + '</td></tr>';
-    }).join('');
+    /* Ek sub order ke input / output ke do table. Ek hi sub order ho to
+       bilkul purani shakl (koi "Sub Order" likha nahi aata). */
+    function tablesFor(inGood, outGood) {
+      var inT = 0;
+      var inRows = inGood.map(function (l, i) {
+        var c = byId(coils, l.coil_id);
+        inT += num(l.input_weight);
+        return '<tr><td class="c">' + (i + 1) + '</td>' +
+          '<td>' + esc(c ? c.coil_serial : '') +
+            (c && c.party_coil_ref ? '<div style="font-size:8.5pt;color:#9C9384">Ref ' +
+              esc(c.party_coil_ref) + '</div>' : '') + '</td>' +
+          '<td>' + esc(c ? [c.material_type, c.grade].filter(Boolean).join(' / ') : '') + '</td>' +
+          '<td class="c">' + esc(c && c.thickness_mm ? c.thickness_mm : '') + '</td>' +
+          '<td class="c">' + esc(c && c.width_mm ? c.width_mm + ' mm' : '') + '</td>' +
+          '<td class="r">' + kg(l.input_weight) + '</td></tr>';
+      }).join('');
 
-    var outGood = jobOutputs.filter(function (l) { return num(l.output_weight) > 0 || num(l.pieces) > 0; });
-    var outT = 0, pcsT = 0;
-    var outRows = outGood.map(function (l, i) {
-      outT += num(l.output_weight); pcsT += num(l.pieces);
-      var c = byId(coils, l.coil_id);
-      return '<tr><td class="c">' + (i + 1) + '</td>' +
-        '<td class="c">' + esc(sizeText(l)) + '</td>' +
-        '<td>' + esc(c ? c.coil_serial : '') + '</td>' +
-        '<td class="r">' + (num(l.pieces) ? kg(l.pieces) : '') + '</td>' +
-        '<td class="r">' + kg(l.output_weight) + '</td>' +
-        '<td>' + esc(l.remarks || '') + '</td></tr>';
-    }).join('');
+      var outT = 0, pcsT = 0;
+      var outRows = outGood.map(function (l, i) {
+        outT += num(l.output_weight); pcsT += num(l.pieces);
+        var c = byId(coils, l.coil_id);
+        return '<tr><td class="c">' + (i + 1) + '</td>' +
+          '<td class="c">' + esc(sizeText(l)) + '</td>' +
+          '<td>' + esc(c ? c.coil_serial : '') + '</td>' +
+          '<td class="r">' + (num(l.pieces) ? kg(l.pieces) : '') + '</td>' +
+          '<td class="r">' + kg(l.output_weight) + '</td>' +
+          '<td>' + esc(l.remarks || '') + '</td></tr>';
+      }).join('');
 
-    var loss = inT - outT;
-    var outFoot = '<tr><td colspan="3" class="k">Total</td>' +
-      '<td class="v">' + (pcsT ? kg(pcsT) : '') + '</td>' +
-      '<td class="v">' + kg(outT) + '</td><td></td></tr>' +
-      '<tr><td colspan="4" class="k">Cutting loss (' + kg(inT) + ' \u2212 ' + kg(outT) + ')</td>' +
-      '<td class="v">' + kg(loss) + '</td><td class="c">' +
-        (inT > 0 ? (Math.round(loss / inT * 1000) / 10) + '%' : '') + '</td></tr>';
+      var loss = inT - outT;
+      var outFoot = '<tr><td colspan="3" class="k">Total</td>' +
+        '<td class="v">' + (pcsT ? kg(pcsT) : '') + '</td>' +
+        '<td class="v">' + kg(outT) + '</td><td></td></tr>' +
+        '<tr><td colspan="4" class="k">Cutting loss (' + kg(inT) + ' − ' + kg(outT) + ')</td>' +
+        '<td class="v">' + kg(loss) + '</td><td class="c">' +
+          (inT > 0 ? (Math.round(loss / inT * 1000) / 10) + '%' : '') + '</td></tr>';
+
+      return { inT:inT, outT:outT, pcsT:pcsT,
+        html:
+        '<table><thead><tr><th class="c" style="width:8mm">#</th><th>Coil</th><th>Material</th>' +
+        '<th class="c" style="width:16mm">Thk mm</th><th class="c" style="width:20mm">Width</th>' +
+        '<th class="r" style="width:26mm">Laga weight</th></tr></thead>' +
+        '<tbody>' + inRows + '</tbody>' +
+        '<tfoot><tr><td colspan="5" class="k">Kul input</td>' +
+        '<td class="v">' + kg(inT) + ' KG</td></tr></tfoot></table>' +
+
+        '<table style="margin-top:5mm"><thead><tr><th class="c" style="width:8mm">#</th>' +
+        '<th class="c" style="width:32mm">Cut size</th><th>Coil</th>' +
+        '<th class="r" style="width:18mm">Pcs</th><th class="r" style="width:26mm">Bana weight</th>' +
+        '<th style="width:34mm">Remarks</th></tr></thead>' +
+        '<tbody>' + (outRows || '<tr><td colspan="6" class="c">Abhi koi output darj nahi</td></tr>') +
+        '</tbody><tfoot>' + outFoot + '</tfoot></table>' };
+    }
+
+    var multi = hasSubOrders && jobSubs.length > 1;
+    var body = '';
+    if (!multi) {
+      body = tablesFor(inAll, outAll).html;
+    } else {
+      var gIn = 0, gOut = 0, gPcs = 0;
+      jobSubs.forEach(function (s) {
+        var si = inAll.filter(function (l) { return l.sub_k === s._k; });
+        var so = outAll.filter(function (l) { return l.sub_k === s._k; });
+        if (!si.length && !so.length) return;
+        var tb = tablesFor(si, so);
+        gIn += tb.inT; gOut += tb.outT; gPcs += tb.pcsT;
+        body += '<div style="margin:6mm 0 2mm;padding:1.5mm 2.5mm;border:0.4mm solid #2A2620;font-weight:700;font-size:10.5pt;' +
+          'break-after:avoid">Sub Order ' + subNo(s) + (s.name ? ' — ' + esc(s.name) : '') + '</div>' + tb.html;
+      });
+      body += '<table style="margin-top:6mm"><tbody>' +
+        '<tr><td class="k">Poora job — kul input</td><td class="v" style="width:34mm">' + kg(gIn) + ' KG</td></tr>' +
+        '<tr><td class="k">Poora job — kul output (' + (gPcs ? kg(gPcs) + ' pcs' : '') + ')</td><td class="v">' + kg(gOut) + ' KG</td></tr>' +
+        '<tr><td class="k">Cutting loss</td><td class="v">' + kg(gIn - gOut) + ' KG' +
+          (gIn > 0 ? ' · ' + (Math.round((gIn - gOut) / gIn * 1000) / 10) + '%' : '') + '</td></tr></tbody></table>';
+    }
 
     $('sheet').innerHTML =
       firmHead(byId(companies, d.company_id) || defFirm(), 'Cutting Job', d.jno, d.jdate) +
@@ -5426,21 +5770,7 @@
         ['Operator', nameOf(operators, d.operator_id, '')],
         ['Status', d.status]
       ])) +
-
-      '<table><thead><tr><th class="c" style="width:8mm">#</th><th>Coil</th><th>Material</th>' +
-      '<th class="c" style="width:16mm">Thk mm</th><th class="c" style="width:20mm">Width</th>' +
-      '<th class="r" style="width:26mm">Laga weight</th></tr></thead>' +
-      '<tbody>' + inRows + '</tbody>' +
-      '<tfoot><tr><td colspan="5" class="k">Kul input</td>' +
-      '<td class="v">' + kg(inT) + ' KG</td></tr></tfoot></table>' +
-
-      '<table style="margin-top:5mm"><thead><tr><th class="c" style="width:8mm">#</th>' +
-      '<th class="c" style="width:32mm">Cut size</th><th>Coil</th>' +
-      '<th class="r" style="width:18mm">Pcs</th><th class="r" style="width:26mm">Bana weight</th>' +
-      '<th style="width:34mm">Remarks</th></tr></thead>' +
-      '<tbody>' + (outRows || '<tr><td colspan="6" class="c">Abhi koi output darj nahi</td></tr>') +
-      '</tbody><tfoot>' + outFoot + '</tfoot></table>' +
-
+      body +
       '<div class="note">Andar ke istemaal ke liye. Yeh maal customer ki apni milkiyat hai.' +
       (d.remarks ? '\n' + d.remarks : '') + '</div>' +
       '<div class="foot"><div class="sign">Operator</div><div class="sign">Supervisor</div>' +
@@ -5472,51 +5802,73 @@
 
     /* Coil ki tarteeb wahi jo input mein hai — receipt aur A4 dono par
        Coil 1, Coil 2 ek hi cheez ko kahen. */
-    var order = [];
-    jobInputs.forEach(function (l) {
-      if (l.coil_id && order.indexOf(l.coil_id) < 0) order.push(l.coil_id);
-    });
-    outs.forEach(function (l) { if (order.indexOf(l.coil_id) < 0) order.push(l.coil_id); });
-
-    var totPieces = 0, totWeight = 0;
-    var blocks = order.map(function (cid, i) {
-      var rows = outs.filter(function (l) { return l.coil_id === cid; });
-      if (!rows.length) return '';
-      var c = byId(coils, cid);
-      var coilSize = c ? [c.thickness_mm ? c.thickness_mm + 'mm' : '',
-                          c.width_mm ? c.width_mm + 'mm' : '']
-                         .filter(Boolean).join(' \u00d7 ') : '';
-      /* Har row mein naap, Pcs aur Weight — teenon alag span, taake kabhi
-         darmiyan se na tootein. 80mm par aam tor par ek hi line mein aa
-         jate hain; 54mm par jagah kam pare to poora hissa khud agli line
-         par chala jata hai (kata ya chhupta kabhi nahi). */
-      var lines = rows.map(function (l) {
-        totWeight += num(l.output_weight);
-        totPieces += num(l.pieces);
-        return '<div class="rc-row">' +
-          '<span class="rc-sz">' + esc(sizeTight(l) || '\u2014') + '</span>' +
-          (num(l.pieces) ? '<span class="rc-pc">' + kg(l.pieces) + ' Pcs</span>' : '') +
-          '<span class="rc-wt">' + kg(l.output_weight) + ' Kg</span>' +
+    function blocksFor(subIns, subOuts) {
+      var order = [];
+      subIns.forEach(function (l) {
+        if (l.coil_id && order.indexOf(l.coil_id) < 0) order.push(l.coil_id);
+      });
+      subOuts.forEach(function (l) { if (order.indexOf(l.coil_id) < 0) order.push(l.coil_id); });
+      var pcs = 0, wt = 0;
+      var html = order.map(function (cid, i) {
+        var rows = subOuts.filter(function (l) { return l.coil_id === cid; });
+        if (!rows.length) return '';
+        var c = byId(coils, cid);
+        var coilSize = c ? [c.thickness_mm ? c.thickness_mm + 'mm' : '',
+                            c.width_mm ? c.width_mm + 'mm' : '']
+                           .filter(Boolean).join(' × ') : '';
+        /* Har row mein naap, Pcs aur Weight — teenon alag span, taake kabhi
+           darmiyan se na tootein. 80mm par aam tor par ek hi line mein aa
+           jate hain; 54mm par jagah kam pare to poora hissa khud agli line
+           par chala jata hai (kata ya chhupta kabhi nahi). */
+        var lines = rows.map(function (l) {
+          wt += num(l.output_weight);
+          pcs += num(l.pieces);
+          return '<div class="rc-row">' +
+            '<span class="rc-sz">' + esc(sizeTight(l) || '—') + '</span>' +
+            (num(l.pieces) ? '<span class="rc-pc">' + kg(l.pieces) + ' Pcs</span>' : '') +
+            '<span class="rc-wt">' + kg(l.output_weight) + ' Kg</span>' +
+            '</div>';
+        }).join('');
+        return '<div class="rc-coil">' +
+          '<div class="cn">Coil ' + (i + 1) + '</div>' +
+          '<div class="sr">' + esc(c ? c.coil_serial : '—') + '</div>' +
+          (coilSize ? '<div class="cs">' + esc(coilSize) + '</div>' : '') +
+          (lines || '<div class="rc-none">Is coil ki koi size nahi</div>') +
           '</div>';
       }).join('');
-      return '<div class="rc-coil">' +
-        '<div class="cn">Coil ' + (i + 1) + '</div>' +
-        '<div class="sr">' + esc(c ? c.coil_serial : '\u2014') + '</div>' +
-        (coilSize ? '<div class="cs">' + esc(coilSize) + '</div>' : '') +
-        (lines || '<div class="rc-none">Is coil ki koi size nahi</div>') +
-        '</div>';
-    }).join('');
+      return { html:html, pcs:pcs, wt:wt };
+    }
+
+    var totPieces = 0, totWeight = 0, blocks = '';
+    if (hasSubOrders && jobSubs.length > 1) {
+      /* Kai sub orders: har sub order apni patti ke saath, uska apna total.
+         Thermal par rang nahi chhapta — is liye patti mota boxed text hai. */
+      jobSubs.forEach(function (s) {
+        var so = outs.filter(function (l) { return l.sub_k === s._k; });
+        if (!so.length) return;
+        var si = jobInputs.filter(function (l) { return l.sub_k === s._k; });
+        var b = blocksFor(si, so);
+        totPieces += b.pcs; totWeight += b.wt;
+        blocks += '<div class="rc-so"><b>Sub Order ' + subNo(s) + '</b>' + (s.name ? ' · ' + esc(s.name) : '') + '</div>' +
+          b.html +
+          '<div class="rc-sub"><span class="k">SO-' + subNo(s) + ' total</span><span class="v">' +
+          (b.pcs ? kg(b.pcs) + ' Pcs · ' : '') + kg(b.wt) + ' Kg</span></div>';
+      });
+    } else {
+      var b1 = blocksFor(jobInputs, outs);
+      blocks = b1.html; totPieces = b1.pcs; totWeight = b1.wt;
+    }
 
     $('receipt').innerHTML =
       '<div class="rc-ttl">Cutting Job</div>' +
       '<div class="rc-hd">' +
-        '<div><span class="k">Job No.</span><span class="v">' + esc(d.jno || '\u2014') + '</span></div>' +
+        '<div><span class="k">Job No.</span><span class="v">' + esc(d.jno || '—') + '</span></div>' +
         '<div><span class="k">Date</span><span class="v">' + esc(fmtDate(d.jdate)) + '</span></div>' +
-        '<div><span class="k">Party</span><span class="v">' + esc(p ? p.name : '\u2014') + '</span></div>' +
+        '<div><span class="k">Party</span><span class="v">' + esc(p ? p.name : '—') + '</span></div>' +
       '</div>' +
       blocks +
       '<div class="rc-tot">' +
-        '<div><span class="k">Total Pcs</span><span class="v">' + (totPieces ? kg(totPieces) : '\u2014') + '</span></div>' +
+        '<div><span class="k">Total Pcs</span><span class="v">' + (totPieces ? kg(totPieces) : '—') + '</span></div>' +
         '<div><span class="k">Total Weight</span><span class="v">' + kg(totWeight) + ' KG</span></div>' +
       '</div>' +
       '<div class="rc-sign">Signature<div class="ln"></div></div>';
