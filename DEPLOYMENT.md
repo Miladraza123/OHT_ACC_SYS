@@ -130,6 +130,7 @@ SQL Editor mein is tarteeb se:
 | 37 | `37_coil_transfer.sql` | Coil Transfer: Ahmed ki coil Bilal ko bechi gayi to malikiyat badalna (poora ya kuch hissa) |
 | 38 | `38_coil_transfer_serial.sql` | Coil Transfer ki nayi coil ka serial `<asli serial>-T1`, `-T2` (serial badalta nahi, peechhe jaata hai) |
 | 39 | `39_job_sub_orders.sql` | Cutting Job mein **Sub Orders** (SO-1, SO-2 ...): har sub order ka apna input, sizes, delivery aur bill; purane jobs ko SO-1 mil jata hai |
+| 40 | `40_invoice_line_job.sql` | Service Invoice ki charge line kisi job se jur sakti hai; print mein har job ki tafseel ke neeche usi ke charges |
 
 Har file ke baad "Success" ka intezaar karein, phir agli.
 

@@ -1978,8 +1978,14 @@
     if (!sb) return Promise.resolve();
     return sb.from('cutting_sub_orders').select('id,job_id').limit(1)
       .then(function (r) { hasSubOrders = !r.error; },
-            function () { hasSubOrders = false; });
+            function () { hasSubOrders = false; })
+      .then(function () {
+        // db/40: invoice ki charge line kisi job se jur sakti hai
+        return sb.from('service_invoice_lines').select('job_id').limit(1)
+          .then(function (r) { hasLineJob = !r.error; }, function () { hasLineJob = false; });
+      });
   }
+  var hasLineJob = false;
   function subsOfJob(jid) {
     return subOrders.filter(function (s) { return s.job_id === jid; })
       .sort(function (a, b) { return a.sub_no - b.sub_no; });
@@ -3466,7 +3472,8 @@
       invLines = (r[0].data || []).map(function (x) {
         return { _k:++lineSeq, id:x.id, service_category_id:x.service_category_id,
                  description:x.description || '', calc_method:x.calc_method,
-                 qty:x.qty, rate:x.rate, tax_pct:x.tax_pct, remarks:x.remarks || '' };
+                 qty:x.qty, rate:x.rate, tax_pct:x.tax_pct, remarks:x.remarks || '',
+                 job_key:x.job_id ? x.job_id + '|' + (x.sub_order_id || '') : '' };
       });
       invJobs = (r[1].data || []).map(function (x) { return { job_id:x.job_id, sub_order_id:x.sub_order_id || null }; });
       var ro = d.status === 'cancelled' || !can('service_invoice_edit');
@@ -3519,6 +3526,16 @@
     var multi = s && subsOfJob(x.job_id).length > 1;
     return (j ? j.jno : x.job_id) + (multi ? ' · ' + subTag(s) + (s.name ? ' ' + s.name : '') : '');
   }
+  /* Jo job hat gaya uski charge lines "alag charge" ho jati hain; sirf ek job ho to
+     bina job wali lines usi job ki maan li jati hain. Dropdown dobara bante hain. */
+  function syncLineJobs() {
+    var keys = invJobs.map(invKey);
+    invLines.forEach(function (l) {
+      if (l.job_key && keys.indexOf(l.job_key) < 0) l.job_key = '';
+      if (!l.job_key && keys.length === 1) l.job_key = keys[0];
+    });
+    if ($('invLines')) drawInvLines(false);
+  }
   function drawInvJobs(ro) {
     var box = $('invJobs');
     if (!invJobs.length) { box.innerHTML = '<div class="hint">Koi job link nahi. Charges phir bhi bill kar sakte hain.</div>'; return; }
@@ -3547,6 +3564,14 @@
             }).join('') + '</select></div>' +
           (ro ? '' : '<button class="rm" data-rm="' + l._k + '" style="margin-top:18px">\u00d7</button>') +
         '</div>' +
+        (hasLineJob && invJobs.length
+          ? '<div class="f" style="margin:8px 0 0"><label>Kis job ka charge</label>' +
+            '<select data-f="job_key"' + dis + '>' +
+            '<option value="">\u2014 Baaqi / alag charge \u2014</option>' +
+            invJobs.map(function (x) {
+              return '<option value="' + esc(invKey(x)) + '"' + (invKey(x) === l.job_key ? ' selected' : '') + '>' + esc(invLabel(x)) + '</option>';
+            }).join('') + '</select></div>'
+          : '') +
         '<div class="f" style="margin:8px 0 0"><label>Tareeqa</label>' +
           '<select data-f="calc_method"' + dis + '>' + CALC.map(function (c) {
             return '<option value="' + c[0] + '"' + (l.calc_method === c[0] ? ' selected' : '') + '>' + c[1] + '</option>';
@@ -3599,12 +3624,12 @@
       this.classList.toggle('on'); markDirty(); updateInvSum();
     });
     $('sParty').addEventListener('change', function () {
-      invJobs = []; markDirty(); drawInvJobs(false);
+      invJobs = []; syncLineJobs(); markDirty(); drawInvJobs(false);
     });
     $('invJobs').addEventListener('click', function (e) {
       var jid = e.target.getAttribute('data-rmjob'); if (!jid) return;
       invJobs = invJobs.filter(function (x) { return invKey(x) !== jid; });
-      markDirty(); drawInvJobs(false);
+      syncLineJobs(); markDirty(); drawInvJobs(false);
     });
     if ($('addInvJob')) $('addInvJob').addEventListener('click', pickUnbilledJobs);
     $('invLines').addEventListener('input', function (e) {
@@ -3620,7 +3645,7 @@
     });
     $('invLines').addEventListener('change', function (e) {
       var f = e.target.getAttribute('data-f');
-      if (f !== 'service_category_id' && f !== 'calc_method') return;
+      if (f !== 'service_category_id' && f !== 'calc_method' && f !== 'job_key') return;
       var k = num(e.target.closest('.ln').getAttribute('data-k'));
       var l = invLines.filter(function (x) { return x._k === k; })[0];
       if (!l) return;
@@ -3642,7 +3667,8 @@
     });
     if ($('addInvLine')) $('addInvLine').addEventListener('click', function () {
       invLines.push({ _k:++lineSeq, id:null, service_category_id:'', description:'',
-                      calc_method:'kg', qty:'', rate:'', tax_pct:0, remarks:'' });
+                      calc_method:'kg', qty:'', rate:'', tax_pct:0, remarks:'',
+                      job_key:invJobs.length === 1 ? invKey(invJobs[0]) : '' });
       markDirty(); drawInvLines(false);
     });
   }
@@ -3673,7 +3699,7 @@
           invJobs.push({ job_id:x.job_id, sub_order_id:x.sub_order_id || null });
           addKg += num(x.output_weight);
         });
-        markDirty(); drawInvJobs(false);
+        syncLineJobs(); markDirty(); drawInvJobs(false);
         // pehli line mein weight khud bhar do — rate user likhega
         var line = invLines.filter(function (l) { return l.calc_method === 'kg'; })[0];
         if (!line) {
@@ -3682,6 +3708,7 @@
           invLines.push(line);
         }
         line.qty = num(line.qty) + addKg;
+        syncLineJobs();
         drawInvLines(false);
       });
     });
@@ -3707,10 +3734,16 @@
       return sb.from('service_invoice_lines').delete().eq('invoice_id', inv.id).then(function (rd) {
         if (rd.error) throw rd.error;   // delete fail ho to dobara insert nahi (warna lines double)
         return sb.from('service_invoice_lines').insert(good.map(function (l, i) {
-          return { invoice_id:inv.id, service_category_id:l.service_category_id || null,
+          var row = { invoice_id:inv.id, service_category_id:l.service_category_id || null,
                    description:l.description, calc_method:l.calc_method,
                    qty:num(l.qty), rate:num(l.rate), tax_pct:num(l.tax_pct),
                    remarks:l.remarks, line_no:i };
+          if (hasLineJob) {
+            var jk = String(l.job_key || '').split('|');
+            row.job_id = jk[0] || null;
+            row.sub_order_id = (hasSubOrders && jk[1]) ? jk[1] : null;
+          }
+          return row;
         }));
       }).then(function (r2) {
         if (r2.error) throw r2.error;
@@ -5608,24 +5641,128 @@
     var co = byId(companies, d.company_id) || defFirm();
     var coStrn = (taxOn && co && co.strn) ? '<div class="adr">STRN ' + esc(co.strn) + '</div>' : '';
 
-    $('sheet').innerHTML =
-      firmHead(co, 'Service Invoice' + (taxOn ? ' \u00b7 Sales Tax' : ''), d.sino, d.sidate) +
-      coStrn +
-      partyBlock('Billed to', p, metaBlock([
-        ['Jobs', jobList.join(', ')],
-        [taxOn && p && p.ntn ? 'NTN' : '', taxOn && p && p.ntn ? p.ntn : '']
-      ])) +
-      '<table><thead><tr><th class="c" style="width:8mm">#</th><th>Service</th>' +
-      '<th class="c" style="width:24mm">Basis</th><th class="r" style="width:22mm">Qty</th>' +
-      '<th class="r" style="width:24mm">Rate</th>' +
-      (taxOn ? '<th class="r" style="width:16mm">Tax</th>' : '') +
-      '<th class="r" style="width:28mm">Amount</th></tr></thead>' +
-      '<tbody>' + rows + '</tbody><tfoot>' + foot + '</tfoot></table>' +
-      (d.narration ? '<div class="note">' + esc(d.narration) + '</div>' : '') +
-      printTerms() +
-      '<div class="foot"><div class="sign">Prepared by</div><div class="sign">Received by</div></div>';
+    function chargeTable(lines, firstLabel, subLabel) {
+      var sum = 0;
+      var tr = lines.map(function (l) {
+        var amt = Math.round(num(l.qty) * num(l.rate) * 100) / 100; sum += amt;
+        var cat = byId(svcCats, l.service_category_id);
+        return '<tr><td>' + esc(cat ? cat.name : (l.description || 'Service')) +
+          (l.description && cat ? '<div style="font-size:8.5pt;color:#9C9384">' + esc(l.description) + '</div>' : '') + '</td>' +
+          '<td class="c" style="width:24mm">' + esc(METHOD[l.calc_method] || l.calc_method) + '</td>' +
+          '<td class="r" style="width:22mm">' + kg(l.qty) + '</td>' +
+          '<td class="r" style="width:24mm">' + money(l.rate) + '</td>' +
+          (taxOn ? '<td class="r" style="width:16mm">' + (num(l.tax_pct) || 0) + '%</td>' : '') +
+          '<td class="r" style="width:28mm">' + money(amt) + '</td></tr>';
+      }).join('');
+      return '<table style="margin-top:1mm"><thead><tr><th>' + esc(firstLabel) + '</th><th class="c">Basis</th>' +
+        '<th class="r">Qty</th><th class="r">Rate</th>' + (taxOn ? '<th class="r">Tax</th>' : '') +
+        '<th class="r">Amount</th></tr></thead><tbody>' + tr + '</tbody>' +
+        (subLabel ? '<tfoot><tr><td colspan="' + (taxOn ? 5 : 4) + '" class="k">' + esc(subLabel) + '</td><td class="v">' + money(sum) + '</td></tr></tfoot>' : '') +
+        '</table>';
+    }
 
-    doPrint($('sheet'), fileSafe(d.sino) + '-' + fileSafe(p ? p.name : 'Party') + '-' + fileDate(d.sidate));
+    var head = firmHead(co, 'Service Invoice' + (taxOn ? ' · Sales Tax' : ''), d.sino, d.sidate) + coStrn;
+    var tail = (d.narration ? '<div class="note">' + esc(d.narration) + '</div>' : '') + printTerms() +
+      '<div class="foot"><div class="sign">Prepared by</div><div class="sign">Received by</div></div>';
+    var pname = fileSafe(d.sino) + '-' + fileSafe(p ? p.name : 'Party') + '-' + fileDate(d.sidate);
+
+    // Koi job juda nahi: bilkul purani shakl
+    if (!invJobs.length) {
+      $('sheet').innerHTML = head +
+        partyBlock('Billed to', p, metaBlock([
+          ['Jobs', jobList.join(', ')],
+          [taxOn && p && p.ntn ? 'NTN' : '', taxOn && p && p.ntn ? p.ntn : '']
+        ])) +
+        '<table><thead><tr><th class="c" style="width:8mm">#</th><th>Service</th>' +
+        '<th class="c" style="width:24mm">Basis</th><th class="r" style="width:22mm">Qty</th>' +
+        '<th class="r" style="width:24mm">Rate</th>' +
+        (taxOn ? '<th class="r" style="width:16mm">Tax</th>' : '') +
+        '<th class="r" style="width:28mm">Amount</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody><tfoot>' + foot + '</tfoot></table>' + tail;
+      doPrint($('sheet'), pname);
+      return;
+    }
+
+    /* Job juda ho: har job ki tafseel (challan, coil, material, thickness) aur us ke neeche
+       usi job ke charges; baaqi charges aakhir mein. Data database se taaza liya jata hai. */
+    var jobIds = [], subIds = {}, whole = {};
+    invJobs.forEach(function (x) {
+      if (jobIds.indexOf(x.job_id) < 0) jobIds.push(x.job_id);
+      if (x.sub_order_id) subIds[x.sub_order_id] = 1; else whole[x.job_id] = 1;
+    });
+    Promise.all([
+      sb.from('cutting_job_outputs').select('id,job_id,coil_id' + (hasSubOrders ? ',sub_order_id' : '')).in('job_id', jobIds),
+      sb.from('delivery_challan_lines').select('job_id,output_id,delivery_challans(dno,status,deleted_at)').in('job_id', jobIds)
+    ]).then(function (r) {
+      var outs = (r[0].data || []).filter(function (o) {
+        return whole[o.job_id] || (o.sub_order_id && subIds[o.sub_order_id]);
+      });
+      var outIds = {}; outs.forEach(function (o) { outIds[o.id] = 1; });
+      var coilIds = [];
+      outs.forEach(function (o) { if (o.coil_id && coilIds.indexOf(o.coil_id) < 0) coilIds.push(o.coil_id); });
+      var missing = coilIds.filter(function (id) { return !byId(coils, id); });
+      var cq = missing.length
+        ? sb.from('coils').select('id,coil_serial,material_type,grade,thickness_mm').in('id', missing)
+        : Promise.resolve({ data:[] });
+      return cq.then(function (cr) {
+        var cmap = {};
+        coils.forEach(function (c) { cmap[c.id] = c; });
+        (cr.data || []).forEach(function (c) { cmap[c.id] = c; });
+        var perJob = {};
+        jobIds.forEach(function (jid) { perJob[jid] = { coils:[], dcs:[] }; });
+        outs.forEach(function (o) {
+          var pj = perJob[o.job_id];
+          if (o.coil_id && pj.coils.indexOf(o.coil_id) < 0) pj.coils.push(o.coil_id);
+        });
+        (r[1].data || []).forEach(function (l) {
+          var dcn = l.delivery_challans;
+          if (!outIds[l.output_id] || !dcn || dcn.status === 'cancelled' || dcn.deleted_at) return;
+          var pj = perJob[l.job_id];
+          if (pj && pj.dcs.indexOf(dcn.dno) < 0) pj.dcs.push(dcn.dno);
+        });
+
+        var used = {};
+        var body = jobIds.map(function (jid) {
+          var j = byId(jobs, jid), pj = perJob[jid];
+          var keysOfJob = invJobs.filter(function (x) { return x.job_id === jid; });
+          var soTxt = keysOfJob.map(function (x) {
+            var s = x.sub_order_id ? byId(subOrders, x.sub_order_id) : null;
+            return s && subsOfJob(jid).length > 1 ? subTag(s) + (s.name ? ' ' + s.name : '') : '';
+          }).filter(Boolean).join(', ');
+          var keys = keysOfJob.map(invKey);
+          var mine = good.filter(function (l) { return l.job_key && keys.indexOf(l.job_key) >= 0; });
+          mine.forEach(function (l) { used[l._k] = 1; });
+          var crow = pj.coils.map(function (cid, i) {
+            var c = cmap[cid] || {};
+            return '<tr><td class="c">' + (i + 1) + '</td><td>' + esc(c.coil_serial || '') + '</td>' +
+              '<td>' + esc([c.material_type, c.grade].filter(Boolean).join(' / ')) + '</td>' +
+              '<td class="c" style="width:20mm">' + esc(c.thickness_mm || '') + '</td></tr>';
+          }).join('');
+          return '<div style="font-size:9.5pt;font-weight:700;margin:5mm 0 1.5mm;padding:1.2mm 2mm;border-left:1.2mm solid #2A2620;' +
+              'background:#F5F1E6;display:flex;break-after:avoid"><span>Job ' + esc(j ? j.jno : '') + (soTxt ? ' · ' + esc(soTxt) : '') + '</span>' +
+              (pj.dcs.length ? '<span style="margin-left:auto;font-weight:400;color:#4A4436">Challan ' + esc(pj.dcs.join(', ')) + '</span>' : '') + '</div>' +
+            '<table><thead><tr><th class="c" style="width:8mm">#</th><th>Coil</th><th>Material</th>' +
+              '<th class="c" style="width:20mm">Thk mm</th></tr></thead><tbody>' + crow + '</tbody></table>' +
+            (mine.length ? chargeTable(mine, 'Charges', 'Job charges') : '');
+        }).join('');
+        var rest = good.filter(function (l) { return !used[l._k]; });
+        if (rest.length) body += '<div style="margin-top:5mm"></div>' + chargeTable(rest, invJobs.length && rest.length < good.length ? 'Baaqi charges' : 'Charges', rest.length < good.length ? 'Baaqi charges total' : '');
+
+        var totFoot = '';
+        function trow(k, v, cls) { return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td class="k">' + k + '</td><td class="v" style="width:34mm">' + v + '</td></tr>'; }
+        if (disc || taxOn) totFoot += trow('Charges total', money(sub));
+        if (disc)  totFoot += trow('Discount', '− ' + money(disc));
+        if (taxOn) totFoot += trow('Sales tax', '+ ' + money(tax));
+        totFoot += trow('Total', money(grand), 'grand');
+        if (paid) totFoot += trow('Paid', '− ' + money(paid));
+        if (due)  totFoot += trow('Balance receivable', money(due));
+
+        $('sheet').innerHTML = head +
+          partyBlock('Billed to', p, metaBlock([[taxOn && p && p.ntn ? 'NTN' : '', taxOn && p && p.ntn ? p.ntn : '']])) +
+          body + '<table style="margin-top:6mm"><tfoot>' + totFoot + '</tfoot></table>' + tail;
+        doPrint($('sheet'), pname);
+      });
+    }).catch(function (e) { sayErr(e, 'print'); });
   }
 
   /* ---------- Material Inward / Gate Pass ---------- */
