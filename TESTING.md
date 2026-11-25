@@ -110,7 +110,7 @@ Sirf tab jab client cutting ka kaam karta ho.
 | 3.42 | Cutting Job **Print** → 80mm / 54mm / A4 | Har sub order ki apni patti aur apna total; aakhir mein poore job ka total |
 | 3.43 | Purane jobs | Bilkul waise; har job ko SO-1 mil gaya |
 | 3.44 | Service Invoice mein 2 job chunein, har charge line par "Kis job ka charge" chunein | Dropdown sirf tab aata hai jab invoice par job juda ho; ek hi job ho to khud chun leta hai |
-| 3.45 | Invoice **Print** | Har job ki patti (job no. + challan no.), us ke coil / material / thickness, neeche usi job ke charges; baaqi charges aakhir mein; phir Total. Cut size, Pcs aur Weight ke column nahi |
+| 3.45 | Invoice **Print** (job juda ho) | Ek hi table: har job ki ek line — Coil (neeche chhota job + challan no.), Material, Thk mm, Basis, Qty, Rate, Amount. Ek job ke kai charges ho to coil wale khane unki lines tak phailte hain; jo charge kisi job se nahi jura wo aakhir mein service ke naam ke saath; phir Total |
 | 3.46 | Bina job wali (ya purani) invoice print | Purani shakl: sirf Service / Basis / Qty / Rate / Amount |
 
 ---
