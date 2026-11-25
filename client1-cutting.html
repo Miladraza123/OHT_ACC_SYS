@@ -5641,26 +5641,6 @@
     var co = byId(companies, d.company_id) || defFirm();
     var coStrn = (taxOn && co && co.strn) ? '<div class="adr">STRN ' + esc(co.strn) + '</div>' : '';
 
-    function chargeTable(lines, firstLabel, subLabel) {
-      var sum = 0;
-      var tr = lines.map(function (l) {
-        var amt = Math.round(num(l.qty) * num(l.rate) * 100) / 100; sum += amt;
-        var cat = byId(svcCats, l.service_category_id);
-        return '<tr><td>' + esc(cat ? cat.name : (l.description || 'Service')) +
-          (l.description && cat ? '<div style="font-size:8.5pt;color:#9C9384">' + esc(l.description) + '</div>' : '') + '</td>' +
-          '<td class="c" style="width:24mm">' + esc(METHOD[l.calc_method] || l.calc_method) + '</td>' +
-          '<td class="r" style="width:22mm">' + kg(l.qty) + '</td>' +
-          '<td class="r" style="width:24mm">' + money(l.rate) + '</td>' +
-          (taxOn ? '<td class="r" style="width:16mm">' + (num(l.tax_pct) || 0) + '%</td>' : '') +
-          '<td class="r" style="width:28mm">' + money(amt) + '</td></tr>';
-      }).join('');
-      return '<table style="margin-top:1mm"><thead><tr><th>' + esc(firstLabel) + '</th><th class="c">Basis</th>' +
-        '<th class="r">Qty</th><th class="r">Rate</th>' + (taxOn ? '<th class="r">Tax</th>' : '') +
-        '<th class="r">Amount</th></tr></thead><tbody>' + tr + '</tbody>' +
-        (subLabel ? '<tfoot><tr><td colspan="' + (taxOn ? 5 : 4) + '" class="k">' + esc(subLabel) + '</td><td class="v">' + money(sum) + '</td></tr></tfoot>' : '') +
-        '</table>';
-    }
-
     var head = firmHead(co, 'Service Invoice' + (taxOn ? ' · Sales Tax' : ''), d.sino, d.sidate) + coStrn;
     var tail = (d.narration ? '<div class="note">' + esc(d.narration) + '</div>' : '') + printTerms() +
       '<div class="foot"><div class="sign">Prepared by</div><div class="sign">Received by</div></div>';
@@ -5721,8 +5701,21 @@
           if (pj && pj.dcs.indexOf(dcn.dno) < 0) pj.dcs.push(dcn.dno);
         });
 
+        /* Ek hi table: har job ki ek line — coil, material, thk, basis, qty, rate, amount.
+           Job aur challan ka number coil ke neeche chhota. Ek job ke kai coils ho to wo ek hi
+           khane mein neeche neeche; kai charges ho to coil wale khane unki line tak phailte hain. */
         var used = {};
-        var body = jobIds.map(function (jid) {
+        var COLS = taxOn ? 9 : 8;
+        function chargeCells(l) {
+          var amt = Math.round(num(l.qty) * num(l.rate) * 100) / 100;
+          return '<td class="c">' + esc(METHOD[l.calc_method] || l.calc_method) + '</td>' +
+            '<td class="r">' + kg(l.qty) + '</td><td class="r">' + money(l.rate) + '</td>' +
+            (taxOn ? '<td class="r">' + (num(l.tax_pct) || 0) + '%</td>' : '') +
+            '<td class="r">' + money(amt) + '</td>';
+        }
+        var blank = '<td></td><td></td><td></td>' + (taxOn ? '<td></td>' : '') + '<td></td>';
+        var no = 0;
+        var trs = jobIds.map(function (jid) {
           var j = byId(jobs, jid), pj = perJob[jid];
           var keysOfJob = invJobs.filter(function (x) { return x.job_id === jid; });
           var soTxt = keysOfJob.map(function (x) {
@@ -5732,24 +5725,28 @@
           var keys = keysOfJob.map(invKey);
           var mine = good.filter(function (l) { return l.job_key && keys.indexOf(l.job_key) >= 0; });
           mine.forEach(function (l) { used[l._k] = 1; });
-          var crow = pj.coils.map(function (cid, i) {
-            var c = cmap[cid] || {};
-            return '<tr><td class="c">' + (i + 1) + '</td><td>' + esc(c.coil_serial || '') + '</td>' +
-              '<td>' + esc([c.material_type, c.grade].filter(Boolean).join(' / ')) + '</td>' +
-              '<td class="c" style="width:20mm">' + esc(c.thickness_mm || '') + '</td></tr>';
-          }).join('');
-          return '<div style="font-size:9.5pt;font-weight:700;margin:5mm 0 1.5mm;padding:1.2mm 2mm;border-left:1.2mm solid #2A2620;' +
-              'background:#F5F1E6;display:flex;break-after:avoid"><span>Job ' + esc(j ? j.jno : '') + (soTxt ? ' · ' + esc(soTxt) : '') + '</span>' +
-              (pj.dcs.length ? '<span style="margin-left:auto;font-weight:400;color:#4A4436">Challan ' + esc(pj.dcs.join(', ')) + '</span>' : '') + '</div>' +
-            '<table><thead><tr><th class="c" style="width:8mm">#</th><th>Coil</th><th>Material</th>' +
-              '<th class="c" style="width:20mm">Thk mm</th></tr></thead><tbody>' + crow + '</tbody></table>' +
-            (mine.length ? chargeTable(mine, 'Charges', 'Job charges') : '');
+          var cl = pj.coils.map(function (cid) { return cmap[cid] || {}; });
+          var span = Math.max(1, mine.length);
+          var subTxt = (j ? j.jno : '') + (soTxt ? ' · ' + soTxt : '') + (pj.dcs.length ? ' · Challan ' + pj.dcs.join(', ') : '');
+          no++;
+          var lead =
+            '<td class="c" rowspan="' + span + '">' + no + '</td>' +
+            '<td rowspan="' + span + '">' + (cl.map(function (c) { return '<div>' + esc(c.coil_serial || '') + '</div>'; }).join('') || '') +
+              '<div style="font-size:8pt;color:#9C9384">' + esc(subTxt) + '</div></td>' +
+            '<td rowspan="' + span + '">' + cl.map(function (c) { return '<div>' + esc([c.material_type, c.grade].filter(Boolean).join(' / ')) + '</div>'; }).join('') + '</td>' +
+            '<td class="c" rowspan="' + span + '">' + cl.map(function (c) { return '<div>' + esc(c.thickness_mm || '') + '</div>'; }).join('') + '</td>';
+          if (!mine.length) return '<tr>' + lead + blank + '</tr>';
+          return mine.map(function (l, i) { return '<tr>' + (i ? '' : lead) + chargeCells(l) + '</tr>'; }).join('');
         }).join('');
-        var rest = good.filter(function (l) { return !used[l._k]; });
-        if (rest.length) body += '<div style="margin-top:5mm"></div>' + chargeTable(rest, invJobs.length && rest.length < good.length ? 'Baaqi charges' : 'Charges', rest.length < good.length ? 'Baaqi charges total' : '');
+        // Jo charge kisi job se nahi jura (ya purani invoice): aakhir mein, service ke naam ke saath
+        good.filter(function (l) { return !used[l._k]; }).forEach(function (l) {
+          var cat = byId(svcCats, l.service_category_id);
+          trs += '<tr><td class="c">' + (++no) + '</td><td colspan="3">' + esc(cat ? cat.name : (l.description || 'Service')) +
+            (l.description && cat ? '<div style="font-size:8pt;color:#9C9384">' + esc(l.description) + '</div>' : '') + '</td>' + chargeCells(l) + '</tr>';
+        });
 
         var totFoot = '';
-        function trow(k, v, cls) { return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td class="k">' + k + '</td><td class="v" style="width:34mm">' + v + '</td></tr>'; }
+        function trow(k, v, cls) { return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td colspan="' + (COLS - 1) + '" class="k">' + k + '</td><td class="v">' + v + '</td></tr>'; }
         if (disc || taxOn) totFoot += trow('Charges total', money(sub));
         if (disc)  totFoot += trow('Discount', '− ' + money(disc));
         if (taxOn) totFoot += trow('Sales tax', '+ ' + money(tax));
@@ -5759,7 +5756,11 @@
 
         $('sheet').innerHTML = head +
           partyBlock('Billed to', p, metaBlock([[taxOn && p && p.ntn ? 'NTN' : '', taxOn && p && p.ntn ? p.ntn : '']])) +
-          body + '<table style="margin-top:6mm"><tfoot>' + totFoot + '</tfoot></table>' + tail;
+          '<table style="margin-top:3mm"><thead><tr><th class="c" style="width:8mm">#</th><th>Coil</th><th>Material</th>' +
+          '<th class="c" style="width:14mm">Thk mm</th><th class="c" style="width:20mm">Basis</th>' +
+          '<th class="r" style="width:16mm">Qty</th><th class="r" style="width:20mm">Rate</th>' +
+          (taxOn ? '<th class="r" style="width:14mm">Tax</th>' : '') +
+          '<th class="r" style="width:26mm">Amount</th></tr></thead><tbody>' + trs + '</tbody><tfoot>' + totFoot + '</tfoot></table>' + tail;
         doPrint($('sheet'), pname);
       });
     }).catch(function (e) { sayErr(e, 'print'); });
