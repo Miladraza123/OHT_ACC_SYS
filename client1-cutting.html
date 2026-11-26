@@ -2101,20 +2101,36 @@
                  width_mm:l.width_mm === '' ? null : num(l.width_mm),
                  received_weight:num(l.received_weight), remarks:l.remarks };
       });
-      var ups = good.filter(function (l) { return l.id && !l.used; }).map(function (l) {
-        return sb.from('coils').update({
+      /* Istemaal shuda coil (job / delivery ho chuki) par bhi size, material, grade, ref, remarks theek
+         ho sakte hain — sirf received weight nahi (wo screen par band hai aur DB bhi rokta hai).
+         Pehle yahan aisi coils chhor di jati thi aur "update ho gaya" likh diya jata tha, magar kuch
+         badalta nahi tha. */
+      var sizeChangedUsed = false;
+      var ups = good.filter(function (l) { return l.id; }).map(function (l) {
+        var body = {
           party_coil_ref:l.party_coil_ref, material_type:l.material_type, grade:l.grade,
           thickness_mm:l.thickness_mm === '' ? null : num(l.thickness_mm),
           width_mm:l.width_mm === '' ? null : num(l.width_mm),
-          received_weight:num(l.received_weight), remarks:l.remarks
-        }).eq('id', l.id);
+          remarks:l.remarks
+        };
+        if (!l.used) body.received_weight = num(l.received_weight);
+        else {
+          var oc = byId(coils, l.id);
+          if (oc && (num(oc.thickness_mm) !== num(body.thickness_mm) || num(oc.width_mm) !== num(body.width_mm))) sizeChangedUsed = true;
+        }
+        return sb.from('coils').update(body).eq('id', l.id).select('id');
       });
       var jobsAll = ups.slice();
       if (news.length) jobsAll.push(sb.from('coils').insert(news));
       return withRollback('material_inwards', inw.id, isFresh, function () {
         return Promise.all(jobsAll).then(function (rs) {
           for (var i = 0; i < rs.length; i++) if (rs[i] && rs[i].error) throw rs[i].error;
-          toast(doc ? 'Inward update ho gaya' : 'Inward ban gaya \u2014 ' + news.length + ' coil serial bane');
+          // koi coil update hi na hui (ijazat / lock) to jhoota "ho gaya" na kahein
+          for (var j = 0; j < ups.length; j++) if (rs[j] && !rs[j].error && Array.isArray(rs[j].data) && !rs[j].data.length) {
+            throw { message:'Coil update nahi ho saki \u2014 ijazat ya lock ki wajah se. Dobara try karein ya admin se poochein.' };
+          }
+          if (doc && sizeChangedUsed) toast('Inward update ho gaya \u2014 dhyan: is coil par kaam ho chuka hai, purane jobs ke wazan wahi rahenge', false);
+          else toast(doc ? 'Inward update ho gaya' : 'Inward ban gaya \u2014 ' + news.length + ' coil serial bane');
         });
       });
     });
