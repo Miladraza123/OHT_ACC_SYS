@@ -260,6 +260,9 @@
 
   /* ---------- print ---------- */
   .sheet { display:none; }
+  .cstools { display:flex; gap:8px; align-items:center; padding:2px 12px 10px; }
+  .cstools .cscnt { flex:1; font-size:12px; color:var(--mute); }
+  .cstools .btn { padding:7px 12px; font-size:12.5px; font-weight:600; }
   /* @page ab JS lagata hai — A4 ke liye A4, receipt ke liye 80mm chaurai
      aur bulandi "auto", taake coils jitne bhi hon parchi utni lambi ho */
   .receipt { display:none; position:fixed; left:-99999px; top:0; z-index:-1; }
@@ -393,6 +396,18 @@
     .sheet tfoot .v { text-align:right; font-family:'IBM Plex Mono',monospace; font-weight:600; }
     .sheet tfoot .grand td { border-top:0.6mm solid #2A2620; font-size:13pt; font-weight:700;
                              padding-top:2.5mm; }
+    .sheet .csband { display:flex; font-size:9.5pt; font-weight:700; margin:4.5mm 0 1.2mm; padding:1.1mm 2mm;
+                     border-left:1.2mm solid #2A2620; background:#F5F1E6; break-after:avoid; }
+    .sheet .csband .csr { margin-left:auto; font-weight:400; color:#4A4436; }
+    .sheet table.cs { table-layout:fixed; }
+    .sheet table.cs th, .sheet table.cs td { font-size:9.5pt; padding:1.6mm 1.2mm; }
+    .sheet table.cs th { font-size:7.5pt; }
+    .sheet table.cs tr { break-inside:avoid; }
+    .sheet table.cs thead { display:table-header-group; }
+    .sheet table.cs tfoot td, .sheet table.cs.csgrand td { border-top:0.4mm solid #2A2620; border-bottom:none; font-weight:700; }
+    .sheet table.cs.csgrand { margin-top:6mm; }
+    .sheet table.cs.csgrand td.v { text-align:right; font-family:'IBM Plex Mono',monospace; }
+    .sheet table.cs td.k { text-align:right; font-weight:400; }
     .sheet .foot { margin-top:14mm; display:flex; justify-content:space-between; font-size:9pt;
                    color:#4A4436; }
     .sheet .sign { border-top:0.3mm solid #9C9384; padding-top:1.5mm; width:52mm; text-align:center; }
@@ -1347,10 +1362,10 @@
   }
 
   /* ---------- Party Coil Stock ---------- */
-  function drawCoils(el) {
+  /* Jo coils is waqt screen par dikh rahi hain (filter + search) — Print aur PDF bhi yahi use karte hain */
+  function filteredCoils() {
     var thr = num(settings && settings.coil_finish_threshold_kg) || 200;
-    var f = el.getAttribute('data-filter') || coilFilter;
-    var rows = coils.filter(function (c) {
+    return coils.filter(function (c) {
       if (coilFilter === 'active' && c.status !== 'active') return false;
       if (coilFilter === 'low' && !(c.status === 'active' && num(c.physical_balance) > 0 && num(c.physical_balance) <= thr)) return false;
       if (coilFilter === 'pending' && !(num(c.pending_delivery) > 0)) return false;
@@ -1358,12 +1373,24 @@
       return hitsQuery(c.coil_serial + ' ' + (c.party_coil_ref || '') + ' ' +
                        nameOf(parties, c.party_id) + ' ' + (c.material_type || '') + ' ' + (c.grade || ''));
     });
+  }
+  function drawCoils(el) {
+    var thr = num(settings && settings.coil_finish_threshold_kg) || 200;
+    var f = el.getAttribute('data-filter') || coilFilter;
+    var rows = filteredCoils();
 
     var segs = [['active','Active'],['low','Low balance'],['pending','Ready'],['closed','Closed'],['all','Sab']];
     var head = '<div class="seg">' + segs.map(function (s) {
       return '<button data-f="' + s[0] + '"' + (coilFilter === s[0] ? ' class="on"' : '') + '>' + s[1] + '</button>';
     }).join('') + '</div>';
 
+    if (rows.length) {
+      var np = {}; rows.forEach(function (c) { np[c.party_id || ''] = 1; });
+      head += '<div class="cstools"><span class="cscnt">' + rows.length + (rows.length === 1 ? ' coil' : ' coils') +
+        ' \u00b7 ' + Object.keys(np).length + (Object.keys(np).length === 1 ? ' party' : ' parties') + '</span>' +
+        '<button class="btn" id="csPrint" type="button">Print</button>' +
+        '<button class="btn" id="csPdf" type="button">Download PDF</button></div>';
+    }
     var body = rows.length ? '<div class="rows">' + rows.map(function (c) {
       var rec = num(c.received_weight) || 1;
       var raw = num(c.raw_balance), fin = num(c.pending_delivery), out = num(c.delivered_weight);
@@ -1400,11 +1427,204 @@
       b.addEventListener('click', function () { coilFilter = b.getAttribute('data-f'); render(); });
     });
     wireOpen(el, openCoil);
+    var cp = el.querySelector('#csPrint'), cd = el.querySelector('#csPdf');
+    if (cp) cp.addEventListener('click', printCoilStock);
+    if (cd) cd.addEventListener('click', downloadCoilStockPdf);
     // "Transfer" ka chhota button: row kholne se pehle rok lo, form party/coil bhar kar khule
     el.querySelectorAll('[data-xfer]').forEach(function (b) {
       b.addEventListener('click', function (e) { e.stopPropagation(); newTransfer(b.getAttribute('data-xfer')); });
       b.addEventListener('keydown', function (e) { e.stopPropagation(); });
     });
+  }
+
+  /* ---------- Party Coil Stock: Print aur PDF Download ----------
+     Dono wahi coils lete hain jo screen par filter/search ke baad dikh rahi hain.
+     Party ke hisaab se group, har party ka total, aakhir mein kul total. */
+  var COIL_FILTER_TXT = { active:'Active (hamare paas maal wali)', low:'Low balance', pending:'Ready (tayyar maal)',
+                          closed:'Closed', all:'Sab coils' };
+  function coilStockData() {
+    var rows = filteredCoils();
+    var by = {}, order = [];
+    rows.forEach(function (c) {
+      var k = c.party_id || '';
+      if (!by[k]) { by[k] = { name:nameOf(parties, c.party_id) || 'Unknown party', rows:[] }; order.push(k); }
+      by[k].rows.push(c);
+    });
+    var groups = order.map(function (k) { return by[k]; })
+      .sort(function (a, b) { return a.name.toLowerCase() < b.name.toLowerCase() ? -1 : a.name.toLowerCase() > b.name.toLowerCase() ? 1 : 0; });
+    var grand = { rec:0, raw:0, fin:0, phy:0 };
+    groups.forEach(function (g) {
+      g.rows.sort(function (a, b) { return String(a.coil_serial || '') < String(b.coil_serial || '') ? -1 : 1; });
+      g.tot = { rec:0, raw:0, fin:0, phy:0 };
+      g.rows.forEach(function (c) {
+        g.tot.rec += num(c.received_weight); g.tot.raw += num(c.raw_balance);
+        g.tot.fin += num(c.pending_delivery); g.tot.phy += num(c.physical_balance);
+      });
+      ['rec','raw','fin','phy'].forEach(function (k) { grand[k] += g.tot[k]; });
+    });
+    var q = ($('q').value || '').trim();
+    var label = (COIL_FILTER_TXT[coilFilter] || coilFilter) + ' · ' + (q ? 'search: "' + q + '"' : 'sab parties');
+    var pk = new Date(Date.now() + 5 * 3600 * 1000).toISOString();    // Karachi (PKT)
+    return { groups:groups, grand:grand, nCoils:rows.length, label:label,
+             stamp:fmtDate(pk.slice(0, 10)) + ', ' + pk.slice(11, 16), day:pk.slice(0, 10) };
+  }
+  function coilCells(c) {
+    return { serial:c.coil_serial || '', mat:[c.material_type, c.grade].filter(Boolean).join(' '),
+             thk:c.thickness_mm == null || c.thickness_mm === '' ? '' : num(c.thickness_mm).toFixed(1),
+             wid:c.width_mm == null || c.width_mm === '' ? '' : num(c.width_mm).toFixed(1),
+             rec:kg(c.received_weight), raw:kg(c.raw_balance), fin:kg(c.pending_delivery), phy:kg(c.physical_balance) };
+  }
+  function coilStockFile(d, ext) {
+    return 'Party-Coil-Stock-' + fileSafe(COIL_FILTER_TXT[coilFilter] ? coilFilter : 'all') + '-' + fileDate(d.day) + ext;
+  }
+  function printCoilStock() {
+    var d = coilStockData();
+    if (!d.nCoils) { toast('Chhapne ke liye koi coil nahi', true); return; }
+    var co = defFirm();
+    var adr = co ? [co.address, co.city, co.phone, co.email, co.ntn ? 'NTN ' + co.ntn : ''].filter(Boolean).map(esc).join('<br>') : '';
+    var html = '<div class="hd">' + (co && co.logo ? '<img class="logo" src="' + esc(co.logo) + '" alt="">' : '') +
+      '<div><div class="firm">' + esc(co ? co.name : APP.brand) + '</div>' + (adr ? '<div class="adr">' + adr + '</div>' : '') +
+      '<div class="kind">Party Coil Stock</div></div>' +
+      '<div class="rt"><div class="no">' + esc(COIL_FILTER_TXT[coilFilter] ? coilFilter.charAt(0).toUpperCase() + coilFilter.slice(1) + ' coils' : 'Coils') + '</div>' +
+      '<div>' + esc(d.stamp) + '</div></div></div>' +
+      '<div class="who"><div><div class="lb">Filter</div><div class="nm" style="font-size:10pt">' + esc(d.label) + '</div></div>' +
+      metaBlock([['Parties', String(d.groups.length)], ['Coils', String(d.nCoils)]]) + '</div>';
+    d.groups.forEach(function (g) {
+      html += '<div class="csband"><span>' + esc(g.name) + '</span><span class="csr">' + g.rows.length +
+              ' coil · hamare paas ' + kg(g.tot.phy) + ' kg</span></div>' +
+        '<table class="cs"><thead><tr><th class="c" style="width:7mm">#</th><th>Coil</th><th>Material</th>' +
+        '<th class="c" style="width:12mm">Thk</th><th class="c" style="width:14mm">Width</th>' +
+        '<th class="r" style="width:18mm">Received</th><th class="r" style="width:18mm">Bina kata</th>' +
+        '<th class="r" style="width:16mm">Tayyar</th><th class="r" style="width:20mm">Hamare paas</th></tr></thead><tbody>' +
+        g.rows.map(function (c, i) {
+          var x = coilCells(c);
+          return '<tr><td class="c">' + (i + 1) + '</td><td>' + esc(x.serial) + '</td><td>' + esc(x.mat) + '</td>' +
+            '<td class="c">' + esc(x.thk) + '</td><td class="c">' + esc(x.wid) + '</td>' +
+            '<td class="r">' + x.rec + '</td><td class="r">' + x.raw + '</td><td class="r">' + x.fin +
+            '</td><td class="r"><b>' + x.phy + '</b></td></tr>';
+        }).join('') + '</tbody><tfoot><tr><td colspan="5" class="k">' + esc(g.name) + ' total</td>' +
+        '<td class="v">' + kg(g.tot.rec) + '</td><td class="v">' + kg(g.tot.raw) + '</td><td class="v">' + kg(g.tot.fin) +
+        '</td><td class="v">' + kg(g.tot.phy) + '</td></tr></tfoot></table>';
+    });
+    html += '<table class="cs csgrand"><tbody><tr><td colspan="5" class="k">KUL TOTAL · ' + d.groups.length +
+      (d.groups.length === 1 ? ' party' : ' parties') + ' · ' + d.nCoils + (d.nCoils === 1 ? ' coil' : ' coils') + '</td>' +
+      '<td class="v" style="width:18mm">' + kg(d.grand.rec) + '</td><td class="v" style="width:18mm">' + kg(d.grand.raw) +
+      '</td><td class="v" style="width:16mm">' + kg(d.grand.fin) + '</td><td class="v" style="width:20mm">' + kg(d.grand.phy) +
+      '</td></tr></tbody></table>';
+    $('sheet').innerHTML = html;
+    doPrint($('sheet'), coilStockFile(d, ''));
+  }
+
+  var pdfLibP = null;
+  function loadScriptOnce(src) {
+    return new Promise(function (res, rej) {
+      var sc = document.createElement('script');
+      sc.src = src; sc.onload = function () { res(); };
+      sc.onerror = function () { rej(new Error('script load failed: ' + src)); };
+      document.head.appendChild(sc);
+    });
+  }
+  function loadPdfLib() {
+    if (window.jspdf && window.jspdf.jsPDF && window.jspdf.jsPDF.API && window.jspdf.jsPDF.API.autoTable) return Promise.resolve();
+    if (!pdfLibP) {
+      pdfLibP = loadScriptOnce('https://cdn.jsdelivr.net/npm/jspdf@2.5.2/dist/jspdf.umd.min.js')
+        .then(function () { return loadScriptOnce('https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.4/dist/jspdf.plugin.autotable.min.js'); })
+        .catch(function (e) { pdfLibP = null; throw e; });
+    }
+    return pdfLibP;
+  }
+  function downloadCoilStockPdf() {
+    var d = coilStockData();
+    if (!d.nCoils) { toast('PDF ke liye koi coil nahi', true); return; }
+    var btn = $('csPdf');
+    if (btn) { btn.disabled = true; btn.textContent = 'Preparing…'; }
+    function done() { var b2 = $('csPdf'); if (b2) { b2.disabled = false; b2.textContent = 'Download PDF'; } }
+    loadPdfLib().then(function () {
+      var doc = new window.jspdf.jsPDF({ unit:'mm', format:'a4', orientation:'portrait' });
+      var W = 210, H = 297, M = 10, y = 14;
+      var co = defFirm();
+      var INK = [42, 38, 32], MUTE = [156, 147, 132], SOFT = [74, 68, 54];
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(17); doc.setTextColor(INK[0], INK[1], INK[2]);
+      doc.text(String(co ? co.name : (APP.brand || '')), M, y + 3);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(SOFT[0], SOFT[1], SOFT[2]);
+      doc.text('P A R T Y   C O I L   S T O C K', M, y + 8.5);
+      doc.setFont('courier', 'bold'); doc.setFontSize(12); doc.setTextColor(INK[0], INK[1], INK[2]);
+      var cap = COIL_FILTER_TXT[coilFilter] ? coilFilter.charAt(0).toUpperCase() + coilFilter.slice(1) + ' coils' : 'Coils';
+      doc.text(cap, W - M, y + 3, { align:'right' });
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      doc.text(d.stamp, W - M, y + 8.5, { align:'right' });
+      doc.setDrawColor(INK[0], INK[1], INK[2]); doc.setLineWidth(1);
+      doc.line(M, y + 12, W - M, y + 12);
+      y += 19;
+      doc.setFontSize(7); doc.setTextColor(MUTE[0], MUTE[1], MUTE[2]); doc.text('FILTER', M, y);
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(INK[0], INK[1], INK[2]);
+      doc.text(d.label, M, y + 5);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      doc.setTextColor(MUTE[0], MUTE[1], MUTE[2]); doc.text('Parties:', W - M - 14, y, { align:'right' });
+      doc.text('Coils:', W - M - 14, y + 4.5, { align:'right' });
+      doc.setTextColor(INK[0], INK[1], INK[2]);
+      doc.text(String(d.groups.length), W - M, y, { align:'right' }); doc.text(String(d.nCoils), W - M, y + 4.5, { align:'right' });
+      y += 12;
+
+      var COLS = { 0:{ halign:'center', cellWidth:7 }, 3:{ halign:'center', cellWidth:12 }, 4:{ halign:'center', cellWidth:14 },
+                   5:{ halign:'right', cellWidth:20 }, 6:{ halign:'right', cellWidth:20 }, 7:{ halign:'right', cellWidth:18 },
+                   8:{ halign:'right', cellWidth:22 } };
+      var HEAD = [['#', 'COIL', 'MATERIAL', 'THK', 'WIDTH', 'RECEIVED', 'BINA KATA', 'TAYYAR', 'HAMARE PAAS']];
+      function rcell(v) { return { content:kg(v), styles:{ halign:'right' } }; }
+      function foot(label, t) { return [[{ content:label + ' total', colSpan:5, styles:{ halign:'right' } }, rcell(t.rec), rcell(t.raw), rcell(t.fin), rcell(t.phy)]]; }
+      var STY = { font:'helvetica', fontSize:8.5, cellPadding:{ top:1.6, bottom:1.6, left:1.2, right:1.2 },
+                  textColor:INK, lineColor:[203, 210, 217], lineWidth:0 };
+      d.groups.forEach(function (g) {
+        // band + header + kam az kam 2 rows ek hi page par rahen
+        if (y > H - 48) { doc.addPage(); y = 14; }
+        doc.setFillColor(245, 241, 230); doc.rect(M, y, W - 2 * M, 6.5, 'F');
+        doc.setFillColor(INK[0], INK[1], INK[2]); doc.rect(M, y, 1.2, 6.5, 'F');
+        doc.setFont('helvetica', 'bold'); doc.setFontSize(9.5); doc.setTextColor(INK[0], INK[1], INK[2]);
+        doc.text(g.name, M + 3.5, y + 4.4);
+        doc.setFont('helvetica', 'normal'); doc.setTextColor(SOFT[0], SOFT[1], SOFT[2]);
+        doc.text(g.rows.length + ' coil  ·  hamare paas ' + kg(g.tot.phy) + ' kg', W - M - 1.5, y + 4.4, { align:'right' });
+        doc.autoTable({
+          startY: y + 8, margin:{ left:M, right:M, top:14, bottom:14 }, theme:'plain', styles:STY,
+          head:HEAD, columnStyles:COLS,
+          headStyles:{ fontSize:7, fontStyle:'bold', textColor:SOFT, lineWidth:{ bottom:0.35 }, lineColor:SOFT },
+          body:g.rows.map(function (c, i) {
+            var x = coilCells(c);
+            return [String(i + 1), x.serial, x.mat, x.thk, x.wid, x.rec, x.raw, x.fin,
+                    { content:x.phy, styles:{ fontStyle:'bold' } }];
+          }),
+          bodyStyles:{ lineWidth:{ bottom:0.15 } },
+          foot:foot(g.name, g.tot),
+          footStyles:{ fontStyle:'bold', fillColor:false, textColor:INK, lineWidth:{ top:0.4 }, lineColor:INK },
+          showFoot:'lastPage',
+          didParseCell:function (h) {
+            if (h.section === 'head' && (h.column.index === 1 || h.column.index === 2)) h.cell.styles.halign = 'left';
+            if (h.section === 'head' && h.column.index >= 5) h.cell.styles.halign = 'right';
+            if (h.section === 'head' && (h.column.index === 0 || h.column.index === 3 || h.column.index === 4)) h.cell.styles.halign = 'center';
+          }
+        });
+        y = doc.lastAutoTable.finalY + 6;
+      });
+      if (y > H - 24) { doc.addPage(); y = 14; }
+      doc.autoTable({
+        startY:y, margin:{ left:M, right:M, top:14, bottom:14 }, theme:'plain', styles:STY, columnStyles:COLS,
+        body:[[{ content:'KUL TOTAL  ·  ' + d.groups.length + (d.groups.length === 1 ? ' party' : ' parties') + '  ·  ' +
+                         d.nCoils + (d.nCoils === 1 ? ' coil' : ' coils'), colSpan:5, styles:{ halign:'right' } },
+               rcell(d.grand.rec), rcell(d.grand.raw), rcell(d.grand.fin), rcell(d.grand.phy)]],
+        bodyStyles:{ fontStyle:'bold', lineWidth:{ top:0.6 }, lineColor:INK }
+      });
+      // har page ke neeche page number
+      var pages = doc.getNumberOfPages();
+      for (var i = 1; i <= pages; i++) {
+        doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(MUTE[0], MUTE[1], MUTE[2]);
+        doc.text('Page ' + i + ' of ' + pages, W - M, H - 6, { align:'right' });
+        doc.text('Party Coil Stock · ' + d.stamp, M, H - 6);
+      }
+      doc.save(coilStockFile(d, '.pdf'));
+      toast('PDF download ho gayi');
+    }).catch(function (e) {
+      console.error('coil stock pdf failed', e);
+      toast('PDF nahi ban saki — internet check karein, ya Print karke "Save as PDF" chunein', true);
+    }).then(done, done);
   }
   var coilFilter = 'active';
   /* Cancelled document delete nahi hota — record mein rehta hai (audit ke

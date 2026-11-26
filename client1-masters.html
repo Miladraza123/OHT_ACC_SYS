@@ -307,6 +307,21 @@
   table.acct tr.tap:focus-visible { outline:none; }
   table.acct tr.tap:focus-visible td { background:#EFE7D8; box-shadow:inset 3px 0 0 var(--cash); }
   table.acct tr.tap .pt .l::after { content:' \203A'; color:var(--mute); font-weight:400; }
+  .dbtn { display:inline-block; margin-top:5px; padding:3px 9px; border:1px solid var(--line);
+          border-radius:6px; background:var(--panel); color:var(--slate); font-size:11px; font-weight:600; cursor:pointer; }
+  .dbtn:hover { background:#EFE7D8; }
+  table.acct tr.dtlrow td { background:var(--panel); padding:4px 9px 10px; }
+  .dtlbox { overflow-x:auto; }
+  .dtlbox table.d { width:100%; border-collapse:collapse; font-size:12px; background:var(--paper);
+                    border:1px solid var(--hair); }
+  .dtlbox table.d th { font-size:9px; letter-spacing:.7px; text-transform:uppercase; color:var(--mute);
+                       text-align:left; padding:5px 7px; border-bottom:1px solid var(--line); background:var(--panel); }
+  .dtlbox table.d td { padding:5px 7px; border-bottom:1px solid var(--hair); vertical-align:top; }
+  .dtlbox table.d tr:last-child td { border-bottom:none; }
+  .dtlbox table.d .r { text-align:right; font-family:'IBM Plex Mono',monospace; white-space:nowrap; }
+  .dtlbox table.d .c { text-align:center; }
+  .dtlbox table.d .g { font-size:10.5px; color:var(--mute); margin-top:1px; }
+  .dtlbox .dx, .psheet .dx { font-size:11px; color:var(--mute); padding:4px 2px 0; }
   table.acct tr.bf td { background:var(--panel); color:var(--slate); font-size:12px; }
   table.acct tfoot td { background:var(--panel); font-weight:700; border-top:1.5px solid var(--slate);
                         border-bottom:none; font-size:13.5px; }
@@ -386,6 +401,22 @@
     .psheet .foot { margin-top:10mm; font-size:8.5pt; color:#4A4436; }
     .psheet tr { break-inside:avoid; }
     .psheet thead { display:table-header-group; }
+    .psheet table.m { table-layout:fixed; }
+    .psheet table.m td, .psheet table.m th { white-space:nowrap; }
+    .psheet table.m td.p { white-space:normal; }
+    .psheet table.m td.r { font-size:9pt; }
+    .psheet table.m tfoot td.k { font-size:11pt; }
+    .psheet table.m tfoot td.v { font-size:9pt; padding-left:2.5mm; padding-right:1mm; }
+    .psheet td.dtl { padding:0 3mm 2.5mm 0; border-bottom:0.3mm solid #D8D0BF; }
+    .psheet table.d { table-layout:fixed; width:100%; font-size:7.5pt; margin:0; }
+    .psheet table.d td, .psheet table.d th { padding:1mm 2.2mm 1mm .6mm; white-space:nowrap; letter-spacing:0;
+                                             border-bottom:0.15mm solid #E7E1D3; vertical-align:top; font-size:7.5pt; }
+    .psheet table.d th { font-size:6.5pt; letter-spacing:.3px; }
+    .psheet table.d td.w { white-space:normal; }
+    .psheet table.d td.r, .psheet table.d th.r { padding-right:.6mm; font-family:inherit; font-variant-numeric:tabular-nums; }
+    .psheet table.d td.c, .psheet table.d th.c { text-align:center; padding-right:.6mm; }
+    .psheet table.d .g { font-size:6.8pt; color:#9C9384; margin-top:.3mm; white-space:normal; }
+    .psheet .dx { font-size:7pt; color:#9C9384; padding:.6mm 0 0; }
   }
 
   .totbar { flex:none; display:flex; background:var(--paper); border-bottom:1px solid var(--hair); }
@@ -2147,6 +2178,7 @@
       led.returns        = r[3].error ? [] : (r[3].data || []);
       led.services       = r[4].error ? [] : (r[4].data || []);
       led.snapshotActive = false;   // is se buildAccount() party ka manual "opening" field use karega, snapshot nahi
+      svcDet = {};
       led.forcedFull     = true;    // ab dobara "Load full history" note na dikhaayein
       redrawLedger();
     }).catch(function (e) {
@@ -2571,6 +2603,146 @@
     return '';
   }
 
+  /* ---- bill ki tafseel (Details) ----
+     Sale/Purchase: items usi screen ke data (led.lines) se. Service Invoice: charges ke
+     saath un ki job, coil, material, thickness aur challan — pehli dafa kholne par database
+     se laaye jate hain aur yaad rakhe jate hain (svcDet). Koi bhi cheez na mile to
+     bas tafseel nahi dikhti — khata apni jagah theek rehta hai. */
+  var svcDet = {};
+  function qtyTxt(q) { return (Number(q) || 0).toLocaleString('en-PK', { maximumFractionDigits:3 }); }
+  function loadSvcDetails(ids) {
+    ids = ids.filter(function (id) { return id && !svcDet[id]; });
+    if (!ids.length) return Promise.resolve();
+    var base = 'id,invoice_id,service_category_id,description,calc_method,qty,rate,amount,line_no';
+    function q(cols) { return sb.from('service_invoice_lines').select(cols).in('invoice_id', ids).order('line_no'); }
+    return q(base + ',job_id,sub_order_id').then(function (r) { return r.error ? q(base) : r; }).then(function (lr) {
+      if (lr.error) throw lr.error;
+      var lines = lr.data || [], jobIds = [];
+      lines.forEach(function (l) { if (l.job_id && jobIds.indexOf(l.job_id) < 0) jobIds.push(l.job_id); });
+      var empty = Promise.resolve({ data:[] });
+      return Promise.all([
+        sb.from('service_categories').select('id,name'),
+        jobIds.length ? sb.from('cutting_jobs').select('id,jno').in('id', jobIds) : empty,
+        jobIds.length ? sb.from('cutting_job_outputs').select('*').in('job_id', jobIds) : empty,
+        jobIds.length ? sb.from('delivery_challan_lines').select('job_id,output_id,delivery_challans(dno,status,deleted_at)').in('job_id', jobIds) : empty,
+        jobIds.length ? sb.from('cutting_sub_orders').select('id,job_id,sub_no,name').in('job_id', jobIds) : empty
+      ]).then(function (r) {
+        var cats = {}, jnos = {}, subs = {}, subCount = {};
+        (r[0].data || []).forEach(function (c) { cats[c.id] = c.name; });
+        (r[1].data || []).forEach(function (j) { jnos[j.id] = j.jno; });
+        (r[4].error ? [] : (r[4].data || [])).forEach(function (s) {
+          subs[s.id] = s; subCount[s.job_id] = (subCount[s.job_id] || 0) + 1;
+        });
+        var outs = r[2].error ? [] : (r[2].data || []);
+        var dcl = r[3].error ? [] : (r[3].data || []);
+        var coilIds = [];
+        outs.forEach(function (o) { if (o.coil_id && coilIds.indexOf(o.coil_id) < 0) coilIds.push(o.coil_id); });
+        var cq = coilIds.length ? sb.from('coils').select('id,coil_serial,material_type,grade,thickness_mm').in('id', coilIds) : empty;
+        return cq.then(function (cr) {
+          var cmap = {};
+          (cr.data || []).forEach(function (c) { cmap[c.id] = c; });
+          ids.forEach(function (id) { svcDet[id] = []; });
+          lines.forEach(function (l) {
+            var mine = outs.filter(function (o) {
+              return o.job_id === l.job_id && (!l.sub_order_id || o.sub_order_id === l.sub_order_id);
+            });
+            var coils = [], oids = {};
+            mine.forEach(function (o) {
+              oids[o.id] = 1;
+              if (o.coil_id && cmap[o.coil_id] && coils.indexOf(cmap[o.coil_id]) < 0) coils.push(cmap[o.coil_id]);
+            });
+            var dcs = [];
+            dcl.forEach(function (x) {
+              var d = x.delivery_challans;
+              if (!oids[x.output_id] || !d || d.status === 'cancelled' || d.deleted_at) return;
+              if (dcs.indexOf(d.dno) < 0) dcs.push(d.dno);
+            });
+            var s = l.sub_order_id ? subs[l.sub_order_id] : null;
+            var so = s && subCount[l.job_id] > 1 ? 'SO-' + s.sub_no + (s.name ? ' ' + s.name : '') : '';
+            svcDet[l.invoice_id].push({
+              cat:cats[l.service_category_id] || '', desc:l.description || '', method:l.calc_method,
+              qty:l.qty, rate:l.rate, amount:l.amount, jno:l.job_id ? (jnos[l.job_id] || '') : '',
+              so:so, dcs:dcs, coils:coils
+            });
+          });
+        });
+      });
+    });
+  }
+  var CALC_TXT = { kg:'Per KG', ton:'Per Ton', piece:'Per Piece', meter:'Per Meter', foot:'Per Foot',
+                   cut:'Per Cut / Pass', fixed:'Fixed Amount' };
+  function extrasLine(rec, isSvc) {
+    var b = [];
+    if (n(rec.discount)) b.push('Discount − ' + money(rec.discount));
+    if (n(rec.tax_total)) b.push('Sales tax + ' + money(rec.tax_total));
+    if (!isSvc) {
+      if (n(rec.loading_amt)) b.push('Loading + ' + money(rec.loading_amt));
+      if (n(rec.cartage_amt)) b.push('Cartage + ' + money(rec.cartage_amt));
+      if (n(rec.cutting_amt)) b.push('Cutting + ' + money(rec.cutting_amt));
+    }
+    return b.length ? '<div class="dx">' + esc(b.join('  ·  ')) + '</div>' : '';
+  }
+  /* e = ledger event (kind 'bill' ya 'service'); print = chhapne wali shakl (colgroup ke saath) */
+  function detailTableHtml(e, print) {
+    if (e.kind === 'bill') {
+      var v = led.vouchers.filter(function (x) { return x.id === e.id; })[0];
+      var ls = led.lines.filter(function (l) { return l.voucher_id === e.id; })
+                        .sort(function (a, b) { return n(a.line_no) - n(b.line_no); });
+      if (!v || !ls.length) return '';
+      var body = ls.map(function (l) {
+        var it = db.items.filter(function (x) { return x.id === l.item_id; })[0];
+        var hasSale = !(l.sale_qty == null || l.sale_qty === '');
+        var q = hasSale ? n(l.sale_qty) : n(l.qty);
+        var unit = (hasSale && l.sale_unit) ? l.sale_unit : (it ? it.unit : '');
+        var amt = (l.amount != null && l.amount !== '') ? n(l.amount) : r2(q * n(l.rate));
+        return '<tr><td class="w">' + esc(it ? it.name : '—') + '</td><td class="r">' + esc(qtyTxt(q)) +
+               '</td><td class="c">' + esc(unit || '') + '</td><td class="r">' + money(l.rate) +
+               '</td><td class="r">' + money(amt) + '</td></tr>';
+      }).join('');
+      return '<table class="d">' + (print ? '<colgroup><col><col style="width:13mm"><col style="width:10mm">' +
+             '<col style="width:22mm"><col style="width:24mm"></colgroup>' : '') +
+             '<thead><tr><th>Item</th><th class="r">Qty</th><th class="c">Unit</th><th class="r">Rate</th>' +
+             '<th class="r">Amount</th></tr></thead><tbody>' + body + '</tbody></table>' + extrasLine(v, false);
+    }
+    if (e.kind === 'service') {
+      var rows = svcDet[e.id];
+      if (!rows || !rows.length) return '';
+      var si = (led.services || []).filter(function (x) { return x.id === e.id; })[0] || {};
+      var tb = rows.map(function (r) {
+        var first, second, third;
+        var qr = qtyTxt(r.qty) + ' × ' + money(r.rate);
+        var basis = CALC_TXT[r.method] || r.method || '';
+        if (r.jno || r.coils.length) {
+          var sub = [r.jno, r.so, r.dcs.length ? 'Challan ' + r.dcs.join(', ') : ''].filter(Boolean).join(' · ');
+          first = (r.coils.map(function (c) { return '<div>' + esc(c.coil_serial || '') + '</div>'; }).join('')) +
+                  (sub ? '<div class="g">' + esc(sub) + '</div>' : '');
+          second = r.coils.length
+            ? r.coils.map(function (c) {
+                return '<div>' + esc(c.thickness_mm != null && c.thickness_mm !== '' ? c.thickness_mm + ' mm' : '') +
+                  '<div class="g">' + esc([c.material_type, c.grade].filter(Boolean).join(' ')) + '</div></div>';
+              }).join('')
+            : '';
+        } else {
+          first = esc(r.cat || r.desc || 'Service') +
+                  (r.cat && r.desc ? '<div class="g">' + esc(r.desc) + '</div>' : '');
+          second = '';
+        }
+        third = esc(qr) + '<div class="g">' + esc(basis) + '</div>';
+        return '<tr><td class="w">' + first + '</td><td class="w">' + second + '</td><td>' + third +
+               '</td><td class="r"><b>' + money(r.amount) + '</b></td></tr>';
+      }).join('');
+      return '<table class="d s">' + (print ? '<colgroup><col style="width:32mm"><col style="width:23mm">' +
+             '<col style="width:24mm"><col style="width:24mm"></colgroup>' : '') +
+             '<thead><tr><th>Coil / Job</th><th>Thk / Material</th><th>Qty × Rate / Basis</th>' +
+             '<th class="r">Amount</th></tr></thead><tbody>' + tb + '</tbody></table>' + extrasLine(si, true);
+    }
+    return '';
+  }
+  function canDetail(e) {
+    return e.kind === 'service' || (e.kind === 'bill' &&
+      led.lines.some(function (l) { return l.voucher_id === e.id; }));
+  }
+
   function ledgerHtml(p) {
     var acc = buildAccount(p);
     var kind = $('accRange').value;
@@ -2636,16 +2808,19 @@
       var tap = (e.kind === 'bill' || e.kind === 'billpaid') ? ' data-bill="' + e.id + '"'
               : (e.kind === 'return') ? ' data-return="' + e.id + '"'
               : (e.kind === 'day' ? ' data-day="' + e.date + '"' : '');
+      var dkey = (e.kind === 'bill' || e.kind === 'service') && canDetail(e) ? e.kind + ':' + e.id : '';
       rows += '<tr class="' + (tap ? 'tap' : '') + '"' + tap +
         (tap ? ' tabindex="0" role="button"' : '') + '>' +
         '<td class="dt">' + esc(e.date ? dayText(e.date) : '\u2014') + '</td>' +
         '<td class="pt"><div class="l">' + esc(e.label) + '</div>' +
-          (e.sub ? '<div class="s">' + esc(e.sub.slice(0, 60)) + '</div>' : '') + '</td>' +
+          (e.sub ? '<div class="s">' + esc(e.sub.slice(0, 60)) + '</div>' : '') +
+          (dkey ? '<button type="button" class="dbtn" data-dk="' + esc(dkey) + '" aria-expanded="false">Details \u25BE</button>' : '') + '</td>' +
         '<td class="r drcol' + (isDr ? ' dr' : '') + '">' + (isDr ? money(e.delta) : '') + '</td>' +
         '<td class="r crcol' + (!isDr ? ' cr' : '') + '">' + (!isDr ? money(-e.delta) : '') + '</td>' +
         '<td class="r amtcol ' + (isDr ? 'dr' : 'cr') + '">' +
           (isDr ? '' : '\u2212 ') + money(Math.abs(e.delta)) + '</td>' +
-        '<td class="r bal">' + money(Math.abs(run)) + ' ' + (run >= 0 ? 'Dr' : 'Cr') + '</td></tr>';
+        '<td class="r bal">' + money(Math.abs(run)) + ' ' + (run >= 0 ? 'Dr' : 'Cr') + '</td></tr>' +
+        (dkey ? '<tr class="dtlrow" data-dr="' + esc(dkey) + '" hidden><td colspan="6"></td></tr>' : '');
     });
 
     head += '<table class="acct"><thead><tr>' +
@@ -2662,7 +2837,7 @@
       '<td class="r">' + money(Math.abs(run)) + ' ' + (run >= 0 ? 'Dr' : 'Cr') + '</td>' +
       '</tr></tfoot></table>' +
       '<div class="stmt-note">Dr = amount receivable from this party \u00B7 Cr = amount payable to this party.</div>' +
-      '<div class="stmt-note dim">Tap a sale or purchase to open the bill. Tap a received or paid line to see that day\u2019s sheet.</div>' +
+      '<div class="stmt-note dim">Tap a sale or purchase to open the bill; use Details to see its items. Tap a received or paid line to see that day\u2019s sheet.</div>' +
       '</div></div>';
     return head;
   }
@@ -2684,7 +2859,8 @@
       if (accParty !== rec) return;
       $('accWrap').innerHTML = accKind === 'item' ? itemLedgerHtml(rec) : ledgerHtml(rec);
       wireStockForm();
-    }).catch(function () {
+    }).catch(function (err) {
+      console.error('ledger render failed', err);
       if (accParty === rec) $('accWrap').innerHTML =
         '<div class="stmt-doc"><div class="stmt-inner"><div class="accempty">' +
         'Could not load. Check the connection and try again.</div></div></div>';
@@ -2725,10 +2901,20 @@
     });
     if (!shown.length) { toast('Nothing to print in this period', true); return; }
 
+    /* Print mein har bill ki tafseel hamesha khuli hoti hai. Service Invoice ki tafseel
+       database se aati hai; wo na aaye to bhi khata (bina tafseel) chhap jata hai. */
+    var svcIds = shown.filter(function (e) { return e.kind === 'service'; }).map(function (e) { return e.id; });
+    var pbtn = $('accPrint');
+    if (pbtn) pbtn.disabled = true;
+    loadSvcDetails(svcIds).catch(function () { toast('Invoice details could not be loaded \u2014 printing without them', true); })
+      .then(function () { buildAndPrint(); });
+
+    function buildAndPrint() {
+    if (pbtn) pbtn.disabled = false;
     var c = defaultCompany();
     var rows = '', run = from ? before : 0, totDr = 0, totCr = 0;
     if (from && before) {
-      rows += '<tr><td>\u2014</td><td>Brought forward</td><td class="r"></td><td class="r"></td>' +
+      rows += '<tr><td>\u2014</td><td class="p">Brought forward</td><td class="r"></td><td class="r"></td>' +
               '<td class="r">' + money(Math.abs(before)) + ' ' + (before >= 0 ? 'Dr' : 'Cr') + '</td></tr>';
     }
     shown.forEach(function (e) {
@@ -2736,10 +2922,14 @@
       var isDr = e.delta >= 0;
       if (isDr) totDr += e.delta; else totCr += -e.delta;
       rows += '<tr><td>' + esc(e.date ? dayText(e.date) : '\u2014') + '</td>' +
-        '<td>' + esc(e.label) + (e.sub ? ' \u2014 ' + esc(e.sub.slice(0, 60)) : '') + '</td>' +
+        '<td class="p">' + esc(e.label) + (e.sub ? ' \u2014 ' + esc(e.sub.slice(0, 60)) : '') + '</td>' +
         '<td class="r">' + (isDr ? money(e.delta) : '') + '</td>' +
         '<td class="r">' + (!isDr ? money(-e.delta) : '') + '</td>' +
         '<td class="r">' + money(Math.abs(run)) + ' ' + (run >= 0 ? 'Dr' : 'Cr') + '</td></tr>';
+      if (e.kind === 'bill' || e.kind === 'service') {
+        var dt = detailTableHtml(e, true);
+        if (dt) rows += '<tr class="dtr"><td colspan="2" class="dtl">' + dt + '</td><td></td><td></td><td></td></tr>';
+      }
     });
 
     var period = from || to
@@ -2761,12 +2951,14 @@
         '<div class="nm">' + esc(p.name) + '</div>' +
         [p.address, p.city, p.phone].filter(Boolean).map(function (x) { return '<div>' + esc(x) + '</div>'; }).join('') +
       '</div>' +
-      '<table><thead><tr><th style="width:26mm">Date</th><th>Particulars</th>' +
-        '<th class="r" style="width:26mm">Debit</th><th class="r" style="width:26mm">Credit</th>' +
-        '<th class="r" style="width:30mm">Balance</th></tr></thead>' +
-        '<tbody>' + rows + '</tbody><tfoot><tr><td></td><td>Closing balance</td>' +
-        '<td class="r">' + money(totDr) + '</td><td class="r">' + money(totCr) + '</td>' +
-        '<td class="r">' + money(Math.abs(run)) + ' ' + (run >= 0 ? 'Dr' : 'Cr') + '</td>' +
+      '<table class="m"><colgroup><col style="width:26mm"><col><col style="width:25.5mm"><col style="width:25.5mm">' +
+        '<col style="width:34mm"></colgroup>' +
+        '<thead><tr><th>Date</th><th>Particulars</th>' +
+        '<th class="r">Debit</th><th class="r">Credit</th>' +
+        '<th class="r">Balance</th></tr></thead>' +
+        '<tbody>' + rows + '</tbody><tfoot><tr><td></td><td class="k">Closing balance</td>' +
+        '<td class="r v">' + money(totDr) + '</td><td class="r v">' + money(totCr) + '</td>' +
+        '<td class="r v">' + money(Math.abs(run)) + ' ' + (run >= 0 ? 'Dr' : 'Cr') + '</td>' +
         '</tr></tfoot></table>' +
       '<div class="foot">Dr = amount receivable from them \u00B7 Cr = amount payable to them. ' +
         'Printed ' + dayText(today()) + '.</div>';
@@ -2782,6 +2974,7 @@
       window.removeEventListener('afterprint', restore);
     });
     printWhenReady($('psheet'));
+    }
   }
   $('accPrint').addEventListener('click', printAccount);
 
@@ -2792,7 +2985,7 @@
   /* Billing me koi bill badle ya mite to yahan ka khata/stock apne aap taaza ho jaye */
   window.addEventListener('message', function (e) {
     if (!e.data || e.data.msg !== 'refresh' || e.data.kind !== 'bills') return;
-    led.loaded = false;
+    led.loaded = false; svcDet = {};
     if (accParty) { loadLedgerData().then(redrawLedger).catch(function () {}); }
     else if (tab === 'parties') { loadLedgerData().then(render).catch(function () {}); }
     else if (tab === 'items') { loadLedgerData().then(render).catch(function () {}); }
@@ -2804,11 +2997,39 @@
     else if (r) jump('billing', 'return=' + r);
     else if (d) jump('ledger', 'date=' + d);
   }
+  /* "Details" button — bill kholne wali tap se alag; sirf neeche tafseel kholta/band karta hai */
+  function toggleDetail(btn) {
+    var key = btn.getAttribute('data-dk') || '';
+    var tr = null;
+    [].forEach.call(document.querySelectorAll('tr.dtlrow'), function (t) {
+      if (t.getAttribute('data-dr') === key) tr = t;
+    });
+    if (!tr) return;
+    if (!tr.hidden) { tr.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.innerHTML = 'Details \u25BE'; return; }
+    var kind = key.split(':')[0], id = key.slice(kind.length + 1);
+    var cell = tr.firstChild;
+    function fill() {
+      cell.innerHTML = '<div class="dtlbox">' + (detailTableHtml({ kind:kind, id:id }, false) ||
+        '<div class="dx">No details to show for this bill.</div>') + '</div>';
+    }
+    tr.hidden = false; btn.setAttribute('aria-expanded', 'true'); btn.innerHTML = 'Details \u25B4';
+    if (kind === 'service' && !svcDet[id]) {
+      cell.innerHTML = '<div class="dtlbox"><div class="dx">Loading\u2026</div></div>';
+      loadSvcDetails([id]).then(fill).catch(function () {
+        cell.innerHTML = '';
+        tr.hidden = true; btn.setAttribute('aria-expanded', 'false'); btn.innerHTML = 'Details \u25BE';
+        toast('Could not load the details', true);
+      });
+    } else fill();
+  }
   document.addEventListener('click', function (e) {
+    var dbn = e.target.closest('.dbtn');
+    if (dbn) { e.stopPropagation(); toggleDetail(dbn); return; }
     var row = e.target.closest('table.acct tr.tap'); if (!row) return;
     openTapRow(row);
   });
   document.addEventListener('keydown', function (e) {
+    if (e.target.closest && e.target.closest('.dbtn')) return;   // button apna Enter/Space khud sambhalta hai
     var row = e.target.closest('table.acct tr.tap'); if (!row) return;
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTapRow(row); return; }
     var rows = [].slice.call(document.querySelectorAll('table.acct tr.tap'));

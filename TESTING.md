@@ -112,6 +112,10 @@ Sirf tab jab client cutting ka kaam karta ho.
 | 3.44 | Service Invoice mein 2 job chunein, har charge line par "Kis job ka charge" chunein | Dropdown sirf tab aata hai jab invoice par job juda ho; ek hi job ho to khud chun leta hai |
 | 3.45 | Invoice **Print** (job juda ho) | Ek hi table: har job ki ek line — Coil (neeche chhota job + challan no.), Material, Thk mm, Basis, Qty, Rate, Amount. Ek job ke kai charges ho to coil wale khane unki lines tak phailte hain; jo charge kisi job se nahi jura wo aakhir mein service ke naam ke saath; phir Total |
 | 3.46 | Bina job wali (ya purani) invoice print | Purani shakl: sirf Service / Basis / Qty / Rate / Amount |
+| 3.47 | **Party Coil Stock** → upar **Print** | A4: party ke hisaab se group (band mein coil gine aur "hamare paas" kg), har party ka total, aakhir mein KUL TOTAL. Jo filter/search laga ho wahi coils aate hain |
+| 3.48 | Party Coil Stock → **Download PDF** | Seedhi PDF file download hoti hai (`Party-Coil-Stock-active-DD-Mon-YYYY.pdf`): wahi layout, har page par header aur "Page 1 of N". PDF pehli dafa internet se library laati hai — internet na ho to Print → Save as PDF |
+| 3.49 | Party ledger (Masters → party → Ledger): Sale / Purchase / Service Invoice ke neeche **Details ▾** | Click par bill ki tafseel khulti hai (Sale: item, qty, unit, rate, amount; Service Invoice: coil, job, challan, thk, material, qty × rate, basis, amount). Details dabane se bill nahi khulta; bill kholne ke liye baqi row par tap |
+| 3.50 | Party ledger **Print** | Har bill ki tafseel hamesha khuli; Date aur Balance ek line mein; Debit/Credit/Balance saaf alag; aakhir mein Closing balance |
 
 ---
 
