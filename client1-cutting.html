@@ -893,6 +893,16 @@
   function kg(n) {
     return (Number(n) || 0).toLocaleString('en-PK', { minimumFractionDigits:0, maximumFractionDigits:3 });
   }
+  /* Invoice par mila hua paisa: purani "Paid now" (d.paid, naye par 0) + Daily Ledger ki jori hui lines */
+  var invPay = {}, invPayOk = false;
+  function invReceived(d) { return round2(num(d && d.paid) + (invPayOk && d && d.id ? (invPay[d.id] || 0) : 0)); }
+  function invDue(d) { return round2(num(d.grand_total) - invReceived(d)); }
+  function invBadge(d) {
+    var due = invDue(d);
+    if (due <= 0) return 'PAID';
+    return 'DUE ' + money(due) + (invReceived(d) > 0 ? ' \u00B7 PARTIAL' : '');
+  }
+
   /* Cutting size ka weight khud nikalna — steel sheet ka jaana-mana usool:
        Weight per piece (Kg) = Width(ft) x Length(ft) x Thickness(mm) x 0.729
      Width/Length kisi bhi unit (mm/inch/ft) mein likhe hon, hisaab se pehle
@@ -1126,7 +1136,18 @@
       ? sb.from('coil_transfers').select('*').is('deleted_at', null).order('tdate', { ascending:false }).order('created_at', { ascending:false }).limit(300)
       : Promise.resolve({ data:[] }));
 
+    // Daily Ledger ki wo lines jo invoice se jori hain (db/41) — na ho to bhi sab chale
+    q.push(can('service_invoice_view') || can('cutting_stock_view')
+      ? sb.from('doc_payments').select('doc_kind,doc_id,side,amount').eq('doc_kind', 'service').limit(50000)
+      : Promise.resolve({ data:[], error:{ message:'no access' } }));
+
     return Promise.all(q).then(function (r) {
+      var pr = r[q.length - 1];
+      invPayOk = !!(pr && !pr.error);
+      invPay = {};
+      if (invPayOk) (pr.data || []).forEach(function (x) {
+        invPay[x.doc_id] = round2((invPay[x.doc_id] || 0) + (x.side === 'dr' ? -1 : 1) * num(x.amount));
+      });
       inwards   = r[0].error ? inwards   : (r[0].data || []);
       coils     = r[1].error ? coils     : (r[1].data || []);
       jobs      = r[2].error ? jobs      : (r[2].data || []);
@@ -1271,7 +1292,7 @@
     });
 
     var outstanding = invoices.filter(activeDoc).reduce(function (t, i) {
-      return t + (num(i.grand_total) - num(i.paid));
+      return t + invDue(i);
     }, 0);
 
     var k = [];
@@ -1794,7 +1815,7 @@
       return;
     }
     el.innerHTML = docSeg('invoices') + '<div class="rows">' + rows.map(function (d) {
-      var due = num(d.grand_total) - num(d.paid);
+      var due = invDue(d);
       return '<div class="brow" data-open="' + esc(d.id) + '" tabindex="0">' +
         '<div class="no">' + esc(d.sino || '\u2014') + '</div>' +
         '<div class="docav doc-quotation"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/></svg></div>' +
@@ -1802,7 +1823,7 @@
         '<div class="sub">' + fmtDate(d.sidate) +
         (d.status === 'cancelled' ? ' \u00b7 <span class="pill cancelled">Cancelled</span>' : '') + '</div></div>' +
         '<div class="amt ' + (due > 0 ? 'due' : 'clr') + '">' + money(d.grand_total) +
-        '<span class="tag">' + (due > 0 ? 'DUE ' + money(due) : 'PAID') + '</span></div></div>';
+        '<span class="tag">' + invBadge(d) + '</span></div></div>';
     }).join('') + '</div>';
     wireDocSeg(el, 'invoices');
     wireOpen(el, openInvoice);
@@ -3749,8 +3770,8 @@
         '<button class="sw' + (d.tax_on ? ' on' : '') + '" id="sTaxOn" role="switch"' + dis + '></button></div>' +
       '<div class="f num"><label>Discount</label><input id="sDisc" type="number" step="0.01" value="' +
         esc(d.discount || 0) + '"' + dis + '></div>' +
-      '<div class="f num"><label>Paid now</label><input id="sPaid" type="number" step="0.01" value="' +
-        esc(d.paid || 0) + '"' + dis + '></div>' +
+      '<div class="f"><div class="hint">Payment yahan nahi likhte \u2014 Daily Ledger mein likhein aur wahan is invoice ka number (Invoice no.) chun lein. Invoice par Paid / Partial / Unpaid khud aa jayega.' +
+        (num(d.paid) ? '<br><b>Is invoice par purani payment ' + money(d.paid) + ' pehle se likhi hai</b> (invoice ke saath).' : '') + '</div></div>' +
       '<div class="sum" id="invSum"></div></div>';
   }
   /* Invoice par bill hone wali cheez: ek sub order (job_id + sub_order_id).
@@ -3836,16 +3857,17 @@
       sub += a;
       if (taxOn) tax += Math.round(a * num(l.tax_pct)) / 100;
     });
-    var disc = nval('sDisc'), paid = nval('sPaid');
+    var disc = nval('sDisc'), paid = num(doc && doc.paid), linked = invPayOk && doc && doc.id ? (invPay[doc.id] || 0) : 0;
     var grand = Math.round((sub - disc + tax) * 100) / 100;
-    var due = grand - paid;
+    var due = Math.round((grand - paid - linked) * 100) / 100;
     var s = $('invSum'); if (!s) return;
     s.innerHTML =
       '<div class="sline"><span class="k">Sub total</span><span class="v">' + money(sub) + '</span></div>' +
       (disc ? '<div class="sline"><span class="k">Discount</span><span class="v">\u2212' + money(disc) + '</span></div>' : '') +
       (taxOn ? '<div class="sline"><span class="k">Tax</span><span class="v">' + money(tax) + '</span></div>' : '') +
       '<div class="sline big"><span class="k">Total</span><span class="v">' + money(grand) + '</span></div>' +
-      (paid ? '<div class="sline done"><span class="k">Paid</span><span class="v">' + money(paid) + '</span></div>' : '') +
+      (paid ? '<div class="sline done"><span class="k">Paid with invoice</span><span class="v">' + money(paid) + '</span></div>' : '') +
+      (linked ? '<div class="sline done"><span class="k">Received (Daily Ledger)</span><span class="v">' + money(linked) + '</span></div>' : '') +
       '<div class="sline ' + (due > 0 ? 'due' : 'done') + '"><span class="k">' +
         (due > 0 ? 'Baqi' : 'Poora mil gaya') + '</span><span class="v">' + money(Math.abs(due)) + '</span></div>';
   }
@@ -3853,7 +3875,7 @@
     drawInvJobs(ro); drawInvLines(ro);
     if (ro) return;
     ['sDate','sCo','sNarr'].forEach(function (id) { if ($(id)) $(id).addEventListener('input', markDirty); });
-    ['sDisc','sPaid'].forEach(function (id) {
+    ['sDisc'].forEach(function (id) {
       if ($(id)) $(id).addEventListener('input', function () { markDirty(); updateInvSum(); });
     });
     $('sTaxOn').addEventListener('click', function () {
@@ -3957,7 +3979,7 @@
 
     var head = { sidate:val('sDate') || todayPKT(), party_id:pid,
                  company_id:val('sCo') || null, narration:val('sNarr'),
-                 discount:nval('sDisc'), paid:nval('sPaid'),
+                 discount:nval('sDisc'), paid:num(doc && doc.paid),
                  tax_on:$('sTaxOn').classList.contains('on') };
     var step = doc
       ? sb.from('service_invoices').update(head).eq('id', doc.id).select().single()
@@ -5272,11 +5294,11 @@
       var T15 = { s:0, t:0, g:0, p:0 };
       var out15 = rows15.map(function (i) {
         T15.s += num(i.sub_total); T15.t += num(i.tax_total);
-        T15.g += num(i.grand_total); T15.p += num(i.paid);
+        T15.g += num(i.grand_total); T15.p += invReceived(i);
         return { no:'<span class="doc">' + esc(i.sino) + '</span>', d:fmtDate(i.sidate),
                  p:esc(nameOf(parties, i.party_id)), sub:money(i.sub_total),
-                 tx:money(i.tax_total), g:money(i.grand_total), pd:money(i.paid),
-                 du:money(num(i.grand_total) - num(i.paid)),
+                 tx:money(i.tax_total), g:money(i.grand_total), pd:money(invReceived(i)),
+                 du:money(invDue(i)),
                  st:'<span class="pill ' + esc(i.status) + '">' + esc(i.status) + '</span>' };
       });
       show(tbl([{k:'no',t:'Invoice'},{k:'d',t:'Tareekh'},{k:'p',t:'Party'},{k:'sub',t:'Sub total',r:1},
@@ -5320,15 +5342,15 @@
     } else if (k === 'outstanding') {
       var rows17 = invoices.filter(function (i) {
         return i.status !== 'cancelled' && pOK(i.party_id) &&
-               num(i.grand_total) - num(i.paid) > 0;
+               invDue(i) > 0;
       });
       var T17 = 0;
       var out17 = rows17.map(function (i) {
-        var due = num(i.grand_total) - num(i.paid);
+        var due = invDue(i);
         T17 += due;
         return { s:'<span class="doc">' + esc(i.sino) + '</span>', d:fmtDate(i.sidate),
                  p:esc(nameOf(parties, i.party_id)), g:money(i.grand_total),
-                 pd:money(i.paid), du:'<b class="neg">' + money(due) + '</b>',
+                 pd:money(invReceived(i)), du:'<b class="neg">' + money(due) + '</b>',
                  age:daysAgo(i.sidate) };
       }).sort(function (a, b2) { return b2.age - a.age; });
       show(tbl([{k:'s',t:'Invoice'},{k:'d',t:'Tareekh'},{k:'p',t:'Party'},{k:'g',t:'Total',r:1},
@@ -5849,9 +5871,9 @@
 
     var cols = taxOn ? 7 : 6;
     var disc = $('sDisc') ? nval('sDisc') : num(d.discount);
-    var paid = $('sPaid') ? nval('sPaid') : num(d.paid);
+    var paid = invReceived(d);
     var grand = Math.round((sub - disc + tax) * 100) / 100;
-    var due = grand - paid;
+    var due = Math.round((grand - paid) * 100) / 100;
     function frow(k, v, cls) {
       return '<tr' + (cls ? ' class="' + cls + '"' : '') + '><td colspan="' + (cols - 1) +
              '" class="k">' + k + '</td><td class="v">' + v + '</td></tr>';

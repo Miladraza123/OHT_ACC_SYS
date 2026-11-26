@@ -207,6 +207,30 @@
   .ptywrap .unlink:hover { background:#D6E0E8; }
   td.pty.lit:focus-within .unlink { display:block; }
 
+  .ptywrap .invbtn { position:absolute; top:0.5mm; right:5.4mm; z-index:3; display:none;
+                     height:4.4mm; min-width:4.4mm; border:none; border-radius:2.2mm;
+                     background:#E4EBDD; color:#4B6B3A; font-size:10px; line-height:1; font-weight:700;
+                     padding:0 1.4mm; cursor:pointer; }
+  .ptywrap .invbtn:hover { background:#D3E0C7; }
+  td.pty.lit:focus-within .invbtn, td.pty.lit .ptywrap.iopen .invbtn { display:block; }
+  .ptywrap .invtag { position:absolute; right:0.8mm; bottom:0.3mm; z-index:2; display:none;
+                     padding:0 1.6mm; border-radius:2mm; background:#E4EBDD; color:#4B6B3A;
+                     font-size:7.5pt; font-weight:700; line-height:3.6mm; pointer-events:none; }
+  .ptywrap .invtag.on { display:block; }
+  .ptywrap .imenu { position:absolute; left:0; top:100%; z-index:31; display:none; width:84mm; max-width:90vw;
+                    background:#fff; border:1px solid var(--line); border-radius:2mm;
+                    box-shadow:0 3mm 7mm rgba(31,41,51,.18); max-height:60mm; overflow-y:auto; }
+  .ptywrap.iopen .imenu { display:block; }
+  .imenu .hd { padding:1.6mm 2.4mm; background:#F5F1E6; font-size:7.5pt; letter-spacing:.6px; color:var(--mute); font-weight:700; }
+  .imenu .opt { padding:2mm 2.4mm; font-size:10pt; cursor:pointer; border-top:1px solid var(--hair); display:flex; gap:2mm; align-items:center; }
+  .imenu .opt:hover, .imenu .opt.cur { background:#EFE7D8; }
+  .imenu .opt .no { font-family:'IBM Plex Mono',monospace; font-weight:700; white-space:nowrap; }
+  .imenu .opt .s { color:var(--mute); font-size:8.5pt; white-space:nowrap; }
+  .imenu .opt .due { margin-left:auto; font-family:'IBM Plex Mono',monospace; color:#A0532E; font-size:9pt; white-space:nowrap; }
+  .imenu .none { padding:2.4mm; font-size:9pt; color:var(--mute); }
+  #lnkToast { position:fixed; left:50%; bottom:64px; transform:translateX(-50%); z-index:200; display:none;
+              background:#2A2620; color:#fff; padding:9px 14px; border-radius:8px; font-size:13px; max-width:90vw; }
+  #lnkToast.bad { background:#9B2C2C; }
   .ptywrap .pmenu { position:absolute; left:0; right:0; top:100%; z-index:30; display:none;
                     background:#fff; border:1px solid var(--line); border-radius:2mm;
                     box-shadow:0 3mm 7mm rgba(31,41,51,.18); max-height:46mm; overflow-y:auto;
@@ -319,7 +343,8 @@
     td input { background:transparent !important; }
     td.pty textarea { background:transparent !important; overflow:visible; }
     td.pty { background:transparent !important; }
-    .ptywrap .mirror, .ptywrap .unlink, .ptywrap .pmenu { display:none !important; }
+    .ptywrap .mirror, .ptywrap .unlink, .ptywrap .pmenu, .ptywrap .invbtn, .ptywrap .imenu { display:none !important; }
+    .ptywrap .invtag.on { display:block; }
     .opening input, .opening select, .pageno input { border-color:transparent; background:transparent; }
     tr.focus-row td { background:transparent !important; }
     td.cash .hit:focus { background:transparent !important; }
@@ -1074,7 +1099,7 @@
     if (document.activeElement !== $('openAmt')) $('openAmt').value = s.opening || '';
     if (document.activeElement !== $('openSide')) $('openSide').value = s.side || 'cr';
     if (document.activeElement !== $('pageNo')) $('pageNo').value = s.page || '';
-    ensureBlank(); selectRow(null); recalc(); fitAllParas(); paintAll();
+    ensureBlank(); selectRow(null); recalc(); fitAllParas(); paintAll(); paintInv();
   }
   function fillRow(r, mine) {
     var tr = makeRow();
@@ -1427,7 +1452,10 @@
              '<div class="mirror" aria-hidden="true"></div>' +
              '<textarea rows="1" maxlength="120" data-k="' + k + '"></textarea>' +
              '<button class="unlink" tabindex="-1" title="Remove the party from this line">\u00D7</button>' +
+             '<button class="invbtn" type="button" tabindex="-1" title="Invoice / bill se jorein (optional)">Invoice</button>' +
+             '<div class="invtag"></div>' +
              '<div class="pmenu"></div>' +
+             '<div class="imenu"></div>' +
            '</div>';
   }
 
@@ -1562,6 +1590,141 @@
   document.addEventListener('click', function (e) {
     if (pkTa && !e.target.closest('.ptywrap')) pkClose();
   });
+
+  /* ══════ invoice / bill se jorna (optional) ══════
+     Line ki pakki pehchan (data-rid) ke zariye, doc_payment_links table mein. Sheet ki apni rows
+     ko bilkul nahi chheda jata. Table (db/41) na bani ho to button khamoshi se kaam nahi karta. */
+  var lnk = { map:{}, labels:{}, ok:true, open:null };
+  function lnkKey(rid, side) { return rid + '|' + side; }
+  function lnkSide(ta) { return ta.getAttribute('data-k') === '3' ? 'cr' : 'dr'; }
+  function lnkMsg(text, bad) {
+    var t = document.getElementById('lnkToast');
+    if (!t) { t = document.createElement('div'); t.id = 'lnkToast'; document.body.appendChild(t); }
+    t.textContent = text; t.className = bad ? 'bad' : ''; t.style.display = 'block';
+    clearTimeout(t._t); t._t = setTimeout(function () { t.style.display = 'none'; }, 3200);
+  }
+  function lnkMoney(v) { return (Number(v) || 0).toLocaleString('en-PK', { minimumFractionDigits:2, maximumFractionDigits:2 }); }
+  function paintInv() {
+    rowsEl.querySelectorAll('tr').forEach(function (tr) {
+      var rid = tr.getAttribute('data-rid');
+      tr.querySelectorAll('.ptywrap').forEach(function (w, i) {
+        var tag = w.querySelector('.invtag'); if (!tag) return;
+        var l = rid ? lnk.map[lnkKey(rid, i === 0 ? 'cr' : 'dr')] : null;
+        var txt = l ? (lnk.labels[l.doc_kind + ':' + l.doc_id] || '') : '';
+        tag.textContent = txt ? '✓ ' + txt : '';
+        tag.classList.toggle('on', !!txt);
+      });
+    });
+  }
+  function loadLinks(iso) {
+    if (!sb || !navigator.onLine || !iso) return Promise.resolve();
+    return sb.from('doc_payment_links').select('id,doc_kind,doc_id,row_id,side').eq('sheet_date', iso).then(function (res) {
+      if (res.error) { lnk.ok = false; return; }
+      lnk.ok = true;
+      if (active !== iso) return;
+      var map = {}, vIds = [], sIds = [];
+      (res.data || []).forEach(function (l) {
+        map[lnkKey(l.row_id, l.side)] = l;
+        (l.doc_kind === 'service' ? sIds : vIds).push(l.doc_id);
+      });
+      lnk.map = map;
+      var none = Promise.resolve({ data:[] });
+      return Promise.all([
+        vIds.length ? sb.from('vouchers').select('id,vno').in('id', vIds) : none,
+        sIds.length ? sb.from('service_invoices').select('id,sino').in('id', sIds) : none
+      ]).then(function (r) {
+        (r[0].data || []).forEach(function (v) { lnk.labels['voucher:' + v.id] = v.vno || 'Bill'; });
+        (r[1].data || []).forEach(function (v) { lnk.labels['service:' + v.id] = v.sino || 'Invoice'; });
+        paintInv();
+      });
+    }).catch(function () {});
+  }
+  function lnkClose() {
+    if (lnk.open) lnk.open.classList.remove('iopen');
+    lnk.open = null;
+  }
+  function lnkOpen(btn) {
+    var w = wrapOf(btn), ta = w.querySelector('textarea'), tr = btn.closest('tr');
+    if (lnk.open === w) { lnkClose(); return; }
+    lnkClose();
+    var pid = ta.getAttribute('data-pid'), rid = tr.getAttribute('data-rid'), side = lnkSide(ta);
+    if (!pid || !rid) return;
+    if (!sb || !navigator.onLine) { lnkMsg('Invoice se jorne ke liye internet chahiye', true); return; }
+    if (!lnk.ok) { lnkMsg('Yeh suhulat abhi database mein nahi hai (SQL 41 chalani hai)', true); return; }
+    var menu = w.querySelector('.imenu');
+    menu.innerHTML = '<div class="none">Loading…</div>';
+    w.classList.add('iopen'); lnk.open = w;
+    var cur = lnk.map[lnkKey(rid, side)] || null;
+    Promise.all([
+      sb.from('vouchers').select('id,vno,vtype,vdate,grand_total,paid').eq('party_id', pid).is('deleted_at', null),
+      sb.from('service_invoices').select('id,sino,sidate,grand_total,paid,status').eq('party_id', pid).is('deleted_at', null).neq('status', 'cancelled')
+    ]).then(function (r) {
+      if (r[0].error) throw r[0].error;
+      var docs = (r[0].data || []).map(function (v) {
+        return { kind:'voucher', id:v.id, no:v.vno || 'Bill', date:v.vdate, grand:+v.grand_total || 0, paid:+v.paid || 0,
+                 sign:v.vtype === 'purchase' ? 'dr' : 'cr', type:v.vtype === 'purchase' ? 'Purchase' : 'Sale' };
+      }).concat((r[1].error ? [] : (r[1].data || [])).map(function (v) {
+        return { kind:'service', id:v.id, no:v.sino || 'Invoice', date:v.sidate, grand:+v.grand_total || 0, paid:+v.paid || 0,
+                 sign:'cr', type:'Service' };
+      }));
+      var ids = docs.map(function (d) { return d.id; });
+      var pq = ids.length ? sb.from('doc_payments').select('doc_kind,doc_id,side,amount').in('doc_id', ids)
+                          : Promise.resolve({ data:[] });
+      return pq.then(function (pr) {
+        var net = {};
+        (pr.error ? [] : (pr.data || [])).forEach(function (x) {
+          var d = docs.filter(function (q) { return q.id === x.doc_id; })[0]; if (!d) return;
+          net[d.id] = (net[d.id] || 0) + (x.side === d.sign ? 1 : -1) * (+x.amount || 0);
+        });
+        docs.forEach(function (d) { d.due = Math.round((d.grand - d.paid - (net[d.id] || 0)) * 100) / 100; });
+        var list = docs.filter(function (d) {
+          return d.due > 0.005 || (cur && cur.doc_id === d.id);
+        }).sort(function (a, b) { return a.date < b.date ? 1 : -1; }).slice(0, 25);
+        if (lnk.open !== w) return;
+        menu.innerHTML = '<div class="hd">KHULI INVOICES / BILLS · ' + escHtml(ta.value.slice(0, 24).trim().toUpperCase()) + '</div>' +
+          (list.length ? list.map(function (d, i) {
+            return '<div class="opt' + (cur && cur.doc_id === d.id ? ' cur' : '') + '" data-i="' + i + '">' +
+              '<span class="no">' + escHtml(d.no) + '</span><span class="s">' + escHtml(d.type) + ' · ' + escHtml(d.date || '') + '</span>' +
+              '<span class="due">baqi ' + lnkMoney(d.due) + '</span></div>';
+          }).join('') : '<div class="none">Is party ki koi khuli invoice / bill nahi.</div>') +
+          '<div class="opt" data-i="-1"><i class="s">— koi invoice nahi (aam payment) —</i></div>';
+        menu._list = list;
+      });
+    }).catch(function (e) {
+      console.error('invoice list failed', e);
+      menu.innerHTML = '<div class="none">List load nahi hui. Dobara try karein.</div>';
+    });
+  }
+  function lnkChoose(optEl) {
+    var w = optEl.closest('.ptywrap'), menu = w.querySelector('.imenu'), ta = w.querySelector('textarea'), tr = w.closest('tr');
+    var i = +optEl.getAttribute('data-i'), rid = tr.getAttribute('data-rid'), side = lnkSide(ta);
+    var d = i >= 0 && menu._list ? menu._list[i] : null;
+    lnkClose();
+    if (i >= 0 && !d) return;
+    var amt = num(tr.querySelector('input[data-k="' + (side === 'cr' ? '2' : '0') + '"]').value);
+    if (d && !amt) { lnkMsg('Pehle is line mein raqam likhein', true); return; }
+    var op;
+    if (!d) op = sb.from('doc_payment_links').delete().eq('sheet_date', active).eq('row_id', rid).eq('side', side);
+    else op = sb.from('doc_payment_links').upsert({ doc_kind:d.kind, doc_id:d.id, sheet_date:active, row_id:rid, side:side },
+                                                 { onConflict:'sheet_date,row_id,side' });
+    op.then(function (res) {
+      if (res.error) { lnkMsg('Jorna nahi ho saka: ' + (res.error.message || 'error'), true); return; }
+      if (!d) { delete lnk.map[lnkKey(rid, side)]; lnkMsg('Invoice se alag kar diya'); }
+      else {
+        lnk.map[lnkKey(rid, side)] = { doc_kind:d.kind, doc_id:d.id, row_id:rid, side:side };
+        lnk.labels[d.kind + ':' + d.id] = d.no;
+        lnkMsg(amt > d.due + 0.005 ? d.no + ' se jor di — magar raqam baqi (' + lnkMoney(d.due) + ') se zyada hai' : d.no + ' se jor di gayi', amt > d.due + 0.005);
+      }
+      paintInv();
+    }).catch(function () { lnkMsg('Jorna nahi ho saka — internet check karein', true); });
+  }
+  rowsEl.addEventListener('mousedown', function (e) {
+    var ib = e.target.closest('.invbtn');
+    if (ib) { e.preventDefault(); lnkOpen(ib); return; }
+    var op = e.target.closest('.imenu .opt');
+    if (op) { e.preventDefault(); lnkChoose(op); }
+  });
+  document.addEventListener('click', function (e) { if (lnk.open && !e.target.closest('.ptywrap')) lnkClose(); });
 
   function makeRow() {
     var tr = document.createElement('tr');
@@ -1744,6 +1907,7 @@
     ensureBlank(); selectRow(null); recalc(); renderList();
     store.set(KEY, JSON.stringify(data));   // sirf is device par mehfooz — sirf dekhne se cloud par nahi bhejte
     fitAllParas(); paintAll();
+    lnk.map = {}; paintInv(); loadLinks(iso);
   }
 
   // har line ke khaane: tick, raqam, naam — dono taraf (6 khaane)

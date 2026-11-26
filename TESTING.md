@@ -126,6 +126,11 @@ Sirf tab jab client cutting ka kaam karta ho.
 | 4.1 | Aaj ki sheet mein credit/debit entries | Total khud ginn jate hain |
 | 4.2 | Party ka naam link karein | Naam mil jata hai |
 | 4.3 | Kal ki sheet kholein | Opening pichle din ka closing |
+| 4.4 | Credit side par party chunein → **Invoice** button dabayein | Us party ki khuli invoices/bills (baqi raqam ke saath) ki list; ek chunein to line par ✓ INVOICE-NO ka hara tag aata hai. "koi invoice nahi" chunein to jor hat jata hai |
+| 4.5 | Jorne ke baad Sale / Purchase / Service Invoice kholein | List aur screen par **PARTIAL** (ya **PAID** jab poori raqam mil jaye), "Received (Daily Ledger)" ki line, Baqi sahi; print par Paid aur Balance |
+| 4.6 | Bill / Invoice banate waqt | **"Paid now" ka khana nahi hota** — hint likha hota hai ke payment Daily Ledger mein likhein |
+| 4.7 | Party ka khata | Wohi payment sirf **ek dafa** ("Received"), double nahi |
+| 4.8 | Jori hui line sheet se mita dein | Invoice par wo payment khud hat jati hai |
 | 4.4 | **Print** karein | Saaf chhapta hai |
 
 ---
@@ -217,3 +222,4 @@ wo kaam kar lega jo usay nahi karna chahiye.
 | Transfer ki nayi coil ka serial purani tarah (CUT-yyyy-nnnnnn) | `db/38_coil_transfer_serial.sql` reh gaya hai |
 | Cutting Job mein "+ Sub Order" nahi / Invoice mein sirf poore job | `db/39_job_sub_orders.sql` reh gaya hai |
 | Invoice ki charge line par "Kis job ka charge" nahi aata | `db/40_invoice_line_job.sql` reh gaya hai |
+| Daily Ledger mein Invoice button par "SQL 41 chalani hai" / bill par PARTIAL nahi aata | `db/41_doc_payment_links.sql` reh gaya hai |

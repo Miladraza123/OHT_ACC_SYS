@@ -642,7 +642,8 @@ const RESTORE_ORDER = [
   'material_returns', 'material_return_lines',
   'service_invoices', 'service_invoice_lines',
   'service_invoice_jobs', 'service_invoice_challans',
-  'stock_conversions', 'stock_conversion_inputs', 'stock_conversion_outputs'
+  'stock_conversions', 'stock_conversion_inputs', 'stock_conversion_outputs',
+  'doc_payment_links'
 ];
 
 /* Restore mein nahi jatin (users ka login file mein hota hi nahi; balances aur
