@@ -708,8 +708,25 @@
                          (b.cartage_on ? num(b.cartage_amt) : 0) +
                          (b.cutting_on ? num(b.cutting_amt) : 0));
     var grand = round2(sub - disc + tax + extras);
-    var paid = round2(num(b.paid));
-    return { sub:sub, tax:tax, disc:disc, extras:extras, grand:grand, paid:paid, due:round2(grand - paid) };
+    var paid = round2(num(b.paid));          // purani "Paid now" (naye bill par 0)
+    var linked = linkedOf(b);                // Daily Ledger ki jori hui lines
+    return { sub:sub, tax:tax, disc:disc, extras:extras, grand:grand, paid:paid, linked:linked,
+             due:round2(grand - paid - linked) };
+  }
+
+  /* Daily Ledger ki wo lines jo is bill se jori hain (db/41) — sale par credit (mila) − debit (wapas),
+     purchase par debit (diya) − credit. View na bani ho to 0. */
+  var docPay = {}, docPayOk = false;
+  function linkedOf(b) {
+    if (!b || !b.id || !docPayOk) return 0;
+    var x = docPay['voucher:' + b.id];
+    if (!x) return 0;
+    return round2(b.vtype === 'purchase' ? x.dr - x.cr : x.cr - x.dr);
+  }
+  function payBadge(t) {
+    var got = round2(t.paid + t.linked);
+    if (t.due <= 0) return 'PAID';
+    return money(t.due) + ' DUE' + (got > 0 ? ' \u00B7 PARTIAL' : '');
   }
 
   /* party ka abhi tak ka baqaya — opening + sab bills */
@@ -819,7 +836,7 @@
           (b.tax_on ? ' · with tax' : '') +
           (b.narration ? ' · ' + esc(b.narration.slice(0, 34)) : '') + '</div></div>' +
         '<div class="amt ' + (t.due > 0 ? 'due' : 'clr') + '">' + money(t.grand) +
-        '<span class="tag">' + (t.due > 0 ? money(t.due) + ' DUE' : 'PAID') + '</span></div></div>';
+        '<span class="tag">' + payBadge(t) + '</span></div></div>';
     });
 
     /* Aur bhi bill hain to unhein mangwane ka rasta \u2014 warna user ko
@@ -1072,10 +1089,9 @@
         '<div class="f2">' +
           '<div class="f num"><label>Discount</label><input id="bDisc" type="text" inputmode="decimal" value="' +
             (num(b.discount) ? fmt(b.discount) : '') + '" placeholder="0"></div>' +
-          '<div class="f num"><label>Paid now</label><input id="bPaid" type="text" inputmode="decimal" value="' +
-            (num(b.paid) ? fmt(b.paid) : '') + '" placeholder="0"></div>' +
         '</div>' +
-        '<div class="f"><div class="hint">Leave “Paid now” empty for a credit bill — the whole amount stays on their account.</div></div>' +
+        '<div class="f"><div class="hint">Payment yahan nahi likhte \u2014 Daily Ledger mein likhein aur wahan is bill ka number (Invoice no.) chun lein. Bill par Paid / Partial / Unpaid khud aa jayega.' +
+          (num(b.paid) ? '<br><b>Is bill par purani payment ' + money(b.paid) + ' pehle se likhi hai</b> (bill ke saath).' : '') + '</div></div>' +
         '<div class="f"><label>Note</label><textarea id="bNote" placeholder="Vehicle no, order ref, anything worth remembering">' + esc(b.narration) + '</textarea></div>' +
         '</div>';
     } else {
@@ -1092,7 +1108,8 @@
       (b.tax_on ? '<div class="sline"><span class="k">Sales tax</span><span class="v">+ ' + money(t.tax) + '</span></div>' : '') +
       extraLines(b) +
       '<div class="sline big"><span class="k">' + (isDoc ? 'Total' : 'Bill total') + '</span><span class="v">' + money(t.grand) + '</span></div>' +
-      (!isDoc && t.paid ? '<div class="sline"><span class="k">Paid now</span><span class="v">− ' + money(t.paid) + '</span></div>' : '') +
+      (!isDoc && t.paid ? '<div class="sline"><span class="k">Paid with bill</span><span class="v">− ' + money(t.paid) + '</span></div>' : '') +
+      (!isDoc && t.linked ? '<div class="sline"><span class="k">' + (other === 'supplier' ? 'Paid (Daily Ledger)' : 'Received (Daily Ledger)') + '</span><span class="v">− ' + money(t.linked) + '</span></div>' : '') +
       (!isDoc ? '<div class="sline ' + (t.due > 0 ? 'due' : 'done') + '"><span class="k">' +
         (t.due > 0 ? (other === 'supplier' ? 'We still owe' : 'They still owe') : 'Settled') +
         '</span><span class="v">' + money(t.due) + '</span></div>' : '') +
@@ -1429,7 +1446,8 @@
           (b.tax_on ? '<div class="sline"><span class="k">Sales tax</span><span class="v">+ ' + money(t.tax) + '</span></div>' : '') +
           extraLines(b) +
           '<div class="sline big"><span class="k">Bill total</span><span class="v">' + money(t.grand) + '</span></div>' +
-          (t.paid ? '<div class="sline"><span class="k">Paid now</span><span class="v">− ' + money(t.paid) + '</span></div>' : '') +
+          (t.paid ? '<div class="sline"><span class="k">Paid with bill</span><span class="v">− ' + money(t.paid) + '</span></div>' : '') +
+          (t.linked ? '<div class="sline"><span class="k">' + (other === 'supplier' ? 'Paid (Daily Ledger)' : 'Received (Daily Ledger)') + '</span><span class="v">− ' + money(t.linked) + '</span></div>' : '') +
           '<div class="sline ' + (t.due > 0 ? 'due' : 'done') + '"><span class="k">' +
             (t.due > 0 ? (other === 'supplier' ? 'We still owe' : 'They still owe') : 'Settled') +
             '</span><span class="v">' + money(t.due) + '</span></div>';
@@ -2674,8 +2692,9 @@
     if (b.cartage_on && num(b.cartage_amt)) foot += frow('Cartage', '+ ' + money(b.cartage_amt));
     if (b.cutting_on && num(b.cutting_amt)) foot += frow('Cutting', '+ ' + money(b.cutting_amt));
     foot += frow('Total', money(t.grand), 'grand');
-    if (!b.doc && t.paid)  foot += frow('Paid', '− ' + money(t.paid));
+    if (!b.doc && (t.paid + (t.linked || 0)))  foot += frow('Paid', '− ' + money(t.paid + (t.linked || 0)));
     if (!b.doc && t.due)   foot += frow(b.vtype === 'purchase' ? 'Balance payable' : 'Balance receivable', money(t.due));
+    if (!b.doc && !t.due && t.grand) foot += frow('Status', 'PAID');
 
     var co = firmById(b.company_id) || defFirm();
     var coAdr = co ? [co.address, co.city, co.phone, co.email,
@@ -3052,7 +3071,8 @@
           sb.from('stock_transfer_lines').select('*'),
           // aakhir mein — beech mein daalne se baqi ke index khisak jate hain
           sb.from('item_units').select('*').order('line_no'),
-          ledgerServiceQuery
+          ledgerServiceQuery,
+          sb.from('doc_payments').select('doc_kind,doc_id,side,amount').limit(50000)   // db/41 — na ho to bhi bill bane
         ]).then(function (r) {
           r.slice(0, 4).forEach(function (x) { if (x.error) throw x.error; });
           parties = r[0].data || [];
@@ -3090,6 +3110,12 @@
           returns.forEach(function (rr) { rr.lines = (byR[rr.id] || []).sort(function (a, c) { return (a.line_no || 0) - (c.line_no || 0); }); });
           ledgerReturns = r[15].error ? [] : (r[15].data || []);
           ledgerServices = r[20] && !r[20].error ? (r[20].data || []) : [];   // SQL na chali ho to bhi bill bane
+          docPayOk = !!(r[21] && !r[21].error);
+          docPay = {};
+          if (docPayOk) (r[21].data || []).forEach(function (x) {
+            var k = x.doc_kind + ':' + x.doc_id, o = docPay[k] || (docPay[k] = { cr:0, dr:0 });
+            o[x.side === 'dr' ? 'dr' : 'cr'] += num(x.amount);
+          });
 
           // lock set hai lekin snapshot missing/stale mile — masters.html khud theek kar lega
           // agli baar wahan se khula jaye; yahan billing.html mein sirf safe fallback kaafi hai
