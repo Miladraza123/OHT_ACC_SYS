@@ -2106,6 +2106,26 @@
     var head = { idate:val('iDate') || todayPKT(), party_id:party, warehouse_id:wh,
                  vehicle_no:val('iVeh'), gate_pass_no:val('iGate'), remarks:val('iRem') };
 
+    /* Party badalna: inward ke saath us ki coils ki party bhi badalni chahiye (Party Coil Stock coil se
+       party leta hai). Jis coil par kaam ho chuka ho (job / delivery / wapsi / transfer) uski party
+       DB mein badalna mana hai — is liye shuru mein hi saaf bata do, adha kaam na ho. */
+    // (inward ki party pehle badli ja chuki ho aur coils purani party par reh gayi hon to bhi theek ho jati hain)
+    var partyChanged = !!(doc && (String(doc.party_id) !== String(party) || edLines.some(function (l) {
+      var c0 = l.id ? byId(coils, l.id) : null;
+      return c0 && String(c0.party_id) !== String(party);
+    })));
+    if (partyChanged) {
+      var blocked = edLines.filter(function (l) {
+        var c = l.id ? byId(coils, l.id) : null;
+        return c && String(c.party_id) !== String(party) && (num(c.consumed_weight) + num(c.returned_weight) + num(c.delivered_weight) +
+                     num(c.finished_weight) + num(c.closing_adjust_weight) + num(c.transferred_out_weight) > 0 || c.transfer_id);
+      }).map(function (l) { return l.coil_serial; });
+      if (blocked.length) {
+        toast('Party nahi badal sakti \u2014 in coils par kaam ho chuka hai: ' + blocked.join(', '), true);
+        return false;
+      }
+    }
+
     var step = doc
       ? sb.from('material_inwards').update(head).eq('id', doc.id).select().single()
       : sb.from('material_inwards').insert(head).select().single();
@@ -2134,6 +2154,7 @@
           width_mm:l.width_mm === '' ? null : num(l.width_mm),
           remarks:l.remarks
         };
+        if (partyChanged) { body.party_id = party; body.warehouse_id = wh; }
         if (!l.used) body.received_weight = num(l.received_weight);
         else {
           var oc = byId(coils, l.id);
